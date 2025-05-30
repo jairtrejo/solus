@@ -1,0 +1,215 @@
+#lang racket
+
+(require qi)
+(require rackunit)
+(require syntax/parse/define)
+
+(require "qi-class.rkt")
+
+(provide stack
+         exn:empty-stack?
+         exn:stack-overflow?
+         list->stack
+         stack->list)
+
+(define stack
+  (interface ()
+             put
+             take
+             empty?))
+
+(define nonempty-stack%
+  (class* object% (stack)
+    (init-field cards)
+    
+    (super-new)
+
+    (define/public (put c)
+      (~>> (cards)
+          (cons c)
+          (new nonempty-stack% [cards _])))
+
+    (define/public (take)
+      (~> (cards)
+          (-< first
+              (~> rest
+                  list->stack))))
+
+    (define/public (empty?) #f)))
+
+(module+ nonempty-stack%-tests
+  (test-case
+    "take removes a card from the top of the stack"
+    (~> ((new nonempty-stack% [cards '(a b c)]))
+        (send take)
+        1>
+        (check-equal? 'a)))
+  (test-case
+    "put adds a card at the top of the stack"
+    (~> ((new nonempty-stack% [cards '(a b c)]))
+        (send put 'x)
+        (send take)
+        1>
+        (check-equal? 'x)))
+  (test-case
+    "taking the last card yields an empty stack"
+    (~> ((new nonempty-stack% [cards '(a b c)]))
+        (feedback 3 (~> (send take) 2>))
+        (send empty?)
+        check-true)))
+
+(struct exn:empty-stack exn:fail ())
+(define (raise-empty-stack-error)
+  (raise (exn:empty-stack "Stack is empty"
+                          (current-continuation-marks))))
+
+(define empty-stack%
+  (class* object% (stack)
+    (super-new)
+
+    (define/public (put c)
+      (list->stack (list c)))
+
+    (define/public (take)
+      (raise-empty-stack-error))
+
+    (define/public (empty?) #t)))
+
+(module+ empty-stack%-tests
+  (test-case
+    "stack starts empty"
+    (~> ((new empty-stack%))
+        (send empty?)
+        check-true))
+  (test-case
+    "cards cannot be taken"
+    (check-exn
+      exn:empty-stack?
+      (λ ()
+        (~> ((new empty-stack%))
+            (send take)))))
+  (test-case
+    "put yields a nonempty stack with that card at the top"
+    (~> ((new empty-stack%))
+        (send put 'x)
+        (-< (~> (is-a? nonempty-stack%)
+                check-true)
+            (~> (send take)
+                1>
+                (check-equal? 'x))))))
+
+(struct exn:stack-overflow exn:fail ())
+(define (raise-stack-overflow-error)
+  (raise (exn:stack-overflow "Stack overflow"
+                          (current-continuation-marks))))
+
+(define limited-stack%
+  (class* object% (stack)
+    (super-new)
+
+    (init-field capacity)
+    (init [cards '()])
+
+    (define inner-stack
+      (~> (cards) list->stack))
+
+    (define remaining-capacity (- capacity (length cards)))
+
+    (cond [(negative? remaining-capacity) (raise-stack-overflow-error)])
+
+    (define/public (put c)
+      (~> (this inner-stack)
+          (== (when (send full?) (gen (raise-stack-overflow-error)))
+              (~> (send put c)
+                  stack->list
+                  (new limited-stack% [capacity capacity] [cards _])))))
+
+    (define/public (take)
+      (~> (inner-stack)
+          (send take)
+          (== _
+              (~> stack->list
+                  (new limited-stack% [capacity capacity] [cards _])))))
+
+    (define/public (empty?) (send inner-stack empty?))
+
+    (define/public (full?)
+      (~> (remaining-capacity) zero?))))
+
+(module+ limited-stack%-tests
+  (test-case
+    "can add cards when below capacity"
+    (~> ((new limited-stack% [capacity 3] [cards '(a b)]))
+        (send put 'x)
+        (send take)
+        1>
+        (check-equal? 'x)))
+  (test-case
+    "can't add cards above capacity"
+    (check-exn
+      exn:stack-overflow?
+      (λ ()
+        (~> ((new limited-stack% [capacity 1] [cards '(a)]))
+            (send put 'x)))))
+  (test-case
+    "taking cards when full restores capacity"
+    (~> ((new limited-stack% [capacity 3] [cards '(a b c)]))
+        (-< (~> (send full?) check-true)
+            (~> (send take)
+                2> (send full?) check-false)))))
+
+(define (stack->list s)
+  (~> ('() s)
+    (feedback (while (~> 2> (send empty?) NOT))
+              (then (~> 1> reverse))
+              (~> (== _ (send take))
+                  (group 2 (~> X cons) _)))))
+
+(module+ stack->list-tests
+  (test-case
+    "an empty stack produces an empty list"
+    (~> ((new empty-stack%))
+        stack->list
+        (check-equal? '())))
+
+  (test-case
+    "a non-empty stack produces its contents"
+    (~> ((new nonempty-stack% [cards '(a b c)]))
+        stack->list
+        (check-equal? '(a b c)))))
+
+(define (list->stack l [capacity #f])
+  (~> (capacity l)
+      (switch [1> (gen (new limited-stack% [capacity capacity] [cards l]))]
+              [(~> 2> empty?) (gen (new empty-stack%))]
+              [else (~> 2> (new nonempty-stack% [cards _]))])))
+
+(module+ list->stack-tests
+  (test-case
+    "an empty list results in an empty stack"
+    (~> ('())
+        list->stack
+        (send empty?)
+        check-true))
+  (test-case
+    "a non-empty list results in a non-empty stack"
+    (~> ('(a b c))
+        list->stack
+        (-< (~> (send empty?)
+                check-false)
+            (~> (send take)
+                1>
+                (check-equal? 'a)))))
+  (test-case
+    "passing a capacity results in a limited stack"
+    (~> ('(a b c) 3)
+        list->stack
+        (is-a? limited-stack%)
+        check-true)))
+
+(module+ test
+  (require (submod ".." nonempty-stack%-tests))
+  (require (submod ".." empty-stack%-tests))
+  (require (submod ".." limited-stack%-tests))
+  (require (submod ".." stack->list-tests))
+  (require (submod ".." list->stack-tests)))
