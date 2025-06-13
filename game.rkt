@@ -11,54 +11,52 @@
   (generator (msg)
     (displayln "Solus lost")
     (let loop ([msg msg])
-      (begin
-        (match msg
-          ['(quit) (displayln "Game over")]
-          ['(roll d20) (displayln "Press enter to roll a d20")
-                       (read-string 1)
-                       (define d20 (add1 (random 20)))
-                       (displayln (~a "You rolled: " d20))
-                       (loop (yield d20))]
-          ['(choose-card) (displayln "Choose a card: (l)eft or (r)ight")
-                          (define choice
-                            (let loop ()
-                              (define choice (string-trim (read-line)))
-                              (if (member choice '("l" "r")) choice (loop))))
-                          (loop (yield choice))]
-          [msg (displayln msg)
-               (loop (yield))])))))
+      (match msg
+        ['(quit) (displayln "Game over")]
+        ['(roll d20) (displayln "Press enter to roll a d20")
+                     (read-string 1)
+                     (define d20 (add1 (random 20)))
+                     (displayln (~a "You rolled: " d20))
+                     (loop (yield d20))]
+        ['(choose-card) (displayln "Choose a card: (l)eft or (r)ight")
+                        (define choice
+                          (let loop ()
+                            (define choice (string-trim (read-line)))
+                            (if (member choice '("l" "r")) choice (loop))))
+                        (loop (yield choice))]
+        [msg (displayln msg)
+             (loop (yield))]))))
 
-(define (main)
-  (define-values (left-card right-card deck)
-    (~> ((list->stack all-cards))
-        (send take)
-        (== _ (send take))))
-  (define lost-stack (list->stack '()))
-  (define graveyard (list->stack '()))
 
-  (define initial-board
-    (board deck left-card right-card lost-stack graveyard))
+(define initial-board
+  (board (list->stack all-cards)
+         (list->stack '())
+         (list->stack '())))
 
-  (on (initial-board)
-    (feedback
-      (while live?)
-      (~> (-< (~> (gen (ui '(choose-card)))
-                  (as choice))
-              (if (gen (string=? choice "l"))
-                  board-left-card
-                  board-right-card)
-              _)
-          (send _ resolve ui _)
-          (unless (~> board-deck (send empty?))
-                  (~> (-< _ (~> board-deck (send take)))
-                      (if (gen (string=? choice "l"))
-                          (λ (s c d)
-                            (struct-copy board s [left-card c]
-                                                 [deck d]))
-                          (λ (s c d)
-                            (struct-copy board s [right-card c]
-                                                 [deck d]))))))))
 
-  (ui '(quit)))
- 
-(main)
+(define-flow draw-card
+  (==* (~> (send take) X) _))
+
+
+(define-flow choose-left?
+  (gen (string=? "l" (ui '(choose-card)))))
+  
+
+(define-switch reveal-card
+  (% (~> collect length) _)
+  [(= 2) (if choose-left? _ X)]
+  [(= 1) (effect (gen (ui '(auto-reveal))) _)]
+  [(= 0) ground])
+
+
+(define-flow main-loop
+  (when (~> (block 1) live?)
+        (~> (==* _ reveal-card)
+            (group 2 (~> X (send _ resolve ui _)) _)
+            (==* (update-deck (if (send empty?) _ draw-card))
+                 _))))
+
+
+(~> (initial-board)
+    (update-deck (feedback 2 draw-card))
+    (feedback (while live?) main-loop))
