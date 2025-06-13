@@ -40,12 +40,16 @@
 
 (define-flow choose-left?
   (gen (string=? "l" (ui '(choose-card)))))
-  
+
+
+(define-flow auto-reveal
+  (effect (esc (λ (_) (ui '(auto-reveal)))) _))
+
 
 (define-switch reveal-card
   (% (~> collect length) _)
   [(= 2) (if choose-left? _ X)]
-  [(= 1) (effect (gen (ui '(auto-reveal))) _)]
+  [(= 1) auto-reveal]
   [(= 0) ground])
 
 
@@ -57,6 +61,9 @@
                  _))))
 
 
-(~> (initial-board)
-    (update-deck (feedback 2 draw-card))
-    (feedback (while live?) main-loop))
+(define (main)
+  (~> (initial-board)
+      (update-deck (feedback 2 draw-card))
+      (feedback (while live?) main-loop)))
+
+(main)
