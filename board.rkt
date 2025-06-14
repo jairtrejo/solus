@@ -4,10 +4,10 @@
 (require (for-syntax syntax/parse))
 
 (provide (struct-out board))
-
 (provide (for-space qi struct-copy update-deck))
 
 (struct board (deck lost-stack graveyard))
+
 
 (define-qi-syntax-parser struct-copy
   #:literals (_)
