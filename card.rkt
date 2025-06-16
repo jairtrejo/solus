@@ -2,7 +2,7 @@
 
 (require "board.rkt")
 
-(provide all-cards)
+(provide all-cards dummy-card%)
 
 (define card
   (interface ()

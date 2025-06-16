@@ -31,9 +31,16 @@
 
     (define/public (take)
       (~> (cards)
-          (-< first
-              (~> rest
-                  list->stack))))
+          (-< (~> rest
+                  list->stack)
+              first)))
+
+    ;; (define (stack-shuffle)
+    ;;   (~> (this)
+    ;;       stack->list
+    ;;       shuffle
+    ;;       list->stack))
+    ;; (public [stack-shuffle shuffle])
 
     (define/public (empty?) #f)))
 
@@ -42,19 +49,19 @@
     "take removes a card from the top of the stack"
     (~> ((new nonempty-stack% [cards '(a b c)]))
         (send take)
-        1>
+        2>
         (check-equal? 'a)))
   (test-case
     "put adds a card at the top of the stack"
     (~> ((new nonempty-stack% [cards '(a b c)]))
         (send put 'x)
         (send take)
-        1>
+        2>
         (check-equal? 'x)))
   (test-case
     "taking the last card yields an empty stack"
     (~> ((new nonempty-stack% [cards '(a b c)]))
-        (feedback 3 (~> (send take) 2>))
+        (feedback 3 (~> (send take) 1>))
         (send empty?)
         check-true)))
 
@@ -95,7 +102,7 @@
         (-< (~> (is-a? nonempty-stack%)
                 check-true)
             (~> (send take)
-                1>
+                2>
                 (check-equal? 'x))))))
 
 (struct exn:stack-overflow exn:fail ())
@@ -118,18 +125,19 @@
     (cond [(negative? remaining-capacity) (raise-stack-overflow-error)])
 
     (define/public (put c)
-      (~> (this inner-stack)
-          (== (when (send full?) (gen (raise-stack-overflow-error)))
-              (~> (send put c)
-                  stack->list
-                  (new limited-stack% [capacity capacity] [cards _])))))
+      (~> (this)
+          (unless (send full?) (~> (gen inner-stack)
+                                   (send put c)
+                                   stack->list
+                                   (list->stack capacity)))
+          (rectify (raise-stack-overflow-error))))
 
     (define/public (take)
       (~> (inner-stack)
           (send take)
-          (== _
-              (~> stack->list
-                  (new limited-stack% [capacity capacity] [cards _])))))
+          (== (~> stack->list
+                  (list->stack capacity))
+              _)))
 
     (define/public (empty?) (send inner-stack empty?))
 
@@ -142,7 +150,7 @@
     (~> ((new limited-stack% [capacity 3] [cards '(a b)]))
         (send put 'x)
         (send take)
-        1>
+        2>
         (check-equal? 'x)))
   (test-case
     "can't add cards above capacity"
@@ -156,14 +164,14 @@
     (~> ((new limited-stack% [capacity 3] [cards '(a b c)]))
         (-< (~> (send full?) check-true)
             (~> (send take)
-                2> (send full?) check-false)))))
+                1> (send full?) check-false)))))
 
-(define (stack->list s)
-  (~> ('() s)
-    (feedback (while (~> 2> (send empty?) NOT))
-              (then (~> 1> reverse))
-              (~> (== _ (send take))
-                  (group 2 (~> X cons) _)))))
+(define-flow (stack->list s)
+  (~> (feedback (while (~> 1> (send empty?) NOT))
+                (==* (send take) _))
+      (block 1)
+      X
+      collect))
 
 (module+ stack->list-tests
   (test-case
@@ -198,7 +206,7 @@
         (-< (~> (send empty?)
                 check-false)
             (~> (send take)
-                1>
+                2>
                 (check-equal? 'a)))))
   (test-case
     "passing a capacity results in a limited stack"
