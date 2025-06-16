@@ -16,20 +16,66 @@
   (interface ()
              put
              take
-             empty?))
+             empty?
+             shuffle))
+
+
+(define stack%
+  (class* object% (stack)
+    (super-new)
+
+    (abstract put take empty?)
+
+    (define (stack-shuffle)
+      (~> (this)
+          stack->list
+          shuffle
+          list->stack))
+
+    (public [stack-shuffle shuffle])))
+
+
+(module+ stack%-tests
+  (test-case
+    "a non-empty stack can be shuffled"
+    (parameterize ([current-pseudo-random-generator
+                    (make-pseudo-random-generator)])
+      (random-seed 42)
+      (~> ((list->stack '(a b c d)))
+          (send shuffle)
+          stack->list
+          (check-equal? '(b d c a)))))
+  (test-case
+    "an empty stack can be shuffled"
+    (~> ((list->stack '()))
+        (send shuffle)
+        (send empty?)
+        check-true))
+  (test-case
+    "a fixed-capacity stack can be shuffled"
+    (parameterize ([current-pseudo-random-generator
+                    (make-pseudo-random-generator)])
+      (random-seed 42)
+      (~> ((list->stack '(a b c d) 4))
+          (send shuffle)
+          (-< (~> (is-a? limited-stack%)
+                  check-true)
+              (~> stack->list
+                  (check-equal? '(b d c a))))))))
+
 
 (define nonempty-stack%
-  (class* object% (stack)
+  (class* stack% (stack)
     (init-field cards)
     
     (super-new)
 
-    (define/public (put c)
+    (define/override (put c)
       (~>> (cards)
           (cons c)
           (new nonempty-stack% [cards _])))
 
-    (define/public (take)
+    (define/override (take)
       (~> (cards)
           (-< (~> rest
                   list->stack)
@@ -42,7 +88,7 @@
     ;;       list->stack))
     ;; (public [stack-shuffle shuffle])
 
-    (define/public (empty?) #f)))
+    (define/override (empty?) #f)))
 
 (module+ nonempty-stack%-tests
   (test-case
@@ -71,16 +117,16 @@
                           (current-continuation-marks))))
 
 (define empty-stack%
-  (class* object% (stack)
+  (class* stack% (stack)
     (super-new)
 
-    (define/public (put c)
+    (define/override (put c)
       (list->stack (list c)))
 
-    (define/public (take)
+    (define/override (take)
       (raise-empty-stack-error))
 
-    (define/public (empty?) #t)))
+    (define/override (empty?) #t)))
 
 (module+ empty-stack%-tests
   (test-case
@@ -111,7 +157,7 @@
                           (current-continuation-marks))))
 
 (define limited-stack%
-  (class* object% (stack)
+  (class* stack% (stack)
     (super-new)
 
     (init-field capacity)
@@ -124,7 +170,7 @@
 
     (cond [(negative? remaining-capacity) (raise-stack-overflow-error)])
 
-    (define/public (put c)
+    (define/override (put c)
       (~> (this)
           (unless (send full?) (~> (gen inner-stack)
                                    (send put c)
@@ -132,14 +178,20 @@
                                    (list->stack capacity)))
           (rectify (raise-stack-overflow-error))))
 
-    (define/public (take)
+    (define/override (take)
       (~> (inner-stack)
           (send take)
           (== (~> stack->list
                   (list->stack capacity))
               _)))
 
-    (define/public (empty?) (send inner-stack empty?))
+    (define/override (empty?) (send inner-stack empty?))
+
+    (define/override (shuffle)
+      (~> (inner-stack)
+          (send shuffle)
+          stack->list
+          (list->stack capacity)))
 
     (define/public (full?)
       (~> (remaining-capacity) zero?))))
@@ -216,6 +268,7 @@
         check-true)))
 
 (module+ test
+  (require (submod ".." stack%-tests))
   (require (submod ".." nonempty-stack%-tests))
   (require (submod ".." empty-stack%-tests))
   (require (submod ".." limited-stack%-tests))

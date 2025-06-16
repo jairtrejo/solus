@@ -20,8 +20,7 @@
 
 ; TODO: Make board an object
 (define initial-board
-  ; TODO: Implement shuffle
-  (board (list->stack all-cards)
+  (board (send (list->stack all-cards) shuffle)
          (list->stack '())
          (list->stack '())))
 
