@@ -1,7 +1,5 @@
 #lang racket
 
-(require "board.rkt")
-
 (provide all-cards dummy-card%)
 
 (define card

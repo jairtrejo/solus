@@ -18,38 +18,6 @@
 (define ui (make-parameter terminal-ui))
 
 
-; TODO: Make board an object
-(define initial-board
-  (board (send (list->stack all-cards) shuffle)
-         (list->stack '())
-         (list->stack '())))
-
-
-(define-flow draw-card
-  (==* (send take) _))
-
-(module+ draw-card-tests
-  (test-case
-    "can draw a single card"
-    (~> ((list->stack '(a b c)))
-        draw-card
-        collect
-        (check-match (list _ 'a))))
-  (test-case
-    "can draw multiple cards"
-    (~> ((list->stack '(a b c)))
-        draw-card
-        draw-card
-        collect
-        (check-match (list _ 'b 'a))))
-  (test-case
-    "can be used in a feedback loop"
-    (~> ((list->stack '(a b c)))
-        (feedback 3 draw-card)
-        collect
-        (check-match (list _ 'c 'b 'a)))))
-
-
 (define-flow chose-new?
   (gen (string=? "n" ((ui) '(choose-card)))))
 
@@ -124,39 +92,33 @@
                          (~>> (send current-card resolve (ui))
                               ; TODO Implement discard
                               ;; (send current-card discard ui)
-                              (update-deck (if (send empty?) _ draw-card))))
+                              (send _ draw-card)))
                      _))))
 
 (module+ main-loop-tests
   (require (submod "ui.rkt" examples))
-  (define test-board
-    (board (list->stack (list (new dummy-card% [name 'c])))
-           (list->stack '())
-           (list->stack '())))
+  (require (submod "board.rkt" examples))
+  (define test-board (board-with-deck (list (new dummy-card% [name 'c]))))
   (test-case
     "reveals the new card, resolves it and replaces it from the deck"
     (parameterize ([ui (test-ui `([(choose-card) "n"]
                                   (resolving-card a)))])
       (~> (test-board (new dummy-card% [name 'a]) (new dummy-card% [name 'b]))
           main-loop
-          (==* (~> board-deck
-                   (send empty?)
-                   check-true)
-               (~> (>< (get-field name _))
-                   collect
-                   (check-equal? '(c b)))))))
+          (block 1)
+          (~> (>< (get-field name _))
+              collect
+              (check-equal? '(c b))))))
   (test-case
     "reveals the old card, resolves it and replaces it from the deck"
     (parameterize ([ui (test-ui `([(choose-card) "o"]
                                   (resolving-card b)))])
       (~> (test-board (new dummy-card% [name 'a]) (new dummy-card% [name 'b]))
           main-loop
-          (==* (~> board-deck
-                   (send empty?)
-                   check-true)
-               (~> (>< (get-field name _))
-                   collect
-                   (check-equal? '(c a)))))))
+          (block 1)
+          (~> (>< (get-field name _))
+              collect
+              (check-equal? '(c a))))))
   (test-case
     "returns no values when there are no cards to reveal"
     (~> (test-board)
@@ -165,13 +127,9 @@
         check-false))
   (test-case
     "does not replace card when deck is empty"
-    (define empty-deck-board
-      (board (list->stack '())
-             (list->stack '())
-             (list->stack '())))
     (parameterize ([ui (test-ui `((auto-reveal)
                                   (resolving-card c)))])
-      (~> (empty-deck-board (new dummy-card% [name 'c]))
+      (~> (final-board (new dummy-card% [name 'c]))
           main-loop
           count
           (check-equal? 1)))))
@@ -179,13 +137,12 @@
 
 (module+ main
   (~> (initial-board)
-      (update-deck (feedback 2 draw-card))
+      (feedback 2 (==* (send draw-card) _))
       (feedback (while live?) main-loop)
       (effect ((ui) '(game-over)))))
 
 
 (module+ test
-  (require (submod ".." draw-card-tests))
   (require (submod ".." chose-new?-tests))
   (require (submod ".." auto-reveal-tests))
   (require (submod ".." reveal-card-tests))
