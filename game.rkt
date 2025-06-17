@@ -90,8 +90,7 @@
         (~> (==* _ reveal-card)
             (group 2 (~> (== _ (as current-card))
                          (~>> (send current-card resolve (ui))
-                              ; TODO Implement discard
-                              ;; (send current-card discard ui)
+                              (send current-card discard ui)
                               (send _ draw-card)))
                      _))))
 
@@ -102,7 +101,8 @@
   (test-case
     "reveals the new card, resolves it and replaces it from the deck"
     (parameterize ([ui (test-ui `([(choose-card) "n"]
-                                  (resolving-card a)))])
+                                  (resolving-card a)
+                                  (discarding-card a)))])
       (~> (test-board (new dummy-card% [name 'a]) (new dummy-card% [name 'b]))
           main-loop
           (block 1)
@@ -129,7 +129,7 @@
     "does not replace card when deck is empty"
     (parameterize ([ui (test-ui `((auto-reveal)
                                   (resolving-card c)))])
-      (~> (final-board (new dummy-card% [name 'c]))
+      (~> (empty-board (new dummy-card% [name 'c]))
           main-loop
           count
           (check-equal? 1)))))

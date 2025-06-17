@@ -4,7 +4,8 @@
 
 (define card
   (interface ()
-             resolve))
+             resolve
+             discard))
 
 (define dummy-card%
   (class* object% (card)
@@ -14,7 +15,11 @@
 
     (define/public (resolve ui the-board)
       (ui `(resolving-card ,name))
-      the-board)))
+      the-board)
+
+    (define/public (discard ui the-board)
+      (ui `(discarding-to-graveyard ,name))
+      (send the-board discard #:stack 'graveyard))))
       
 
 (define all-cards

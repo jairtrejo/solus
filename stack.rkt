@@ -7,6 +7,7 @@
 (require "qi-class.rkt")
 
 (provide stack
+         stack?
          exn:empty-stack?
          exn:stack-overflow?
          list->stack
@@ -17,7 +18,12 @@
              put
              take
              empty?
-             shuffle))
+             shuffle
+             shuffle-in))
+
+
+(define (stack? s)
+  (is-a? s stack))
 
 
 (define stack%
@@ -32,15 +38,27 @@
           shuffle
           list->stack))
 
-    (public [stack-shuffle shuffle])))
+    (define (shuffle-in s)
+      (~> (this s)
+          (>< stack->list)
+          append
+          list->stack
+          (send shuffle)))
+
+    (public [stack-shuffle shuffle] shuffle-in)))
 
 
 (module+ stack%-tests
+  (require (for-syntax syntax/parse))
+  (define-syntax-parser with-random-seed
+    [(with-random-seed seed body ...) 
+     #'(parameterize ([current-pseudo-random-generator
+                       (make-pseudo-random-generator)])
+         (random-seed seed)
+         body ...)])
   (test-case
     "a non-empty stack can be shuffled"
-    (parameterize ([current-pseudo-random-generator
-                    (make-pseudo-random-generator)])
-      (random-seed 42)
+    (with-random-seed 42
       (~> ((list->stack '(a b c d)))
           (send shuffle)
           stack->list
@@ -53,15 +71,35 @@
         check-true))
   (test-case
     "a fixed-capacity stack can be shuffled"
-    (parameterize ([current-pseudo-random-generator
-                    (make-pseudo-random-generator)])
-      (random-seed 42)
+    (with-random-seed 42
       (~> ((list->stack '(a b c d) 4))
           (send shuffle)
           (-< (~> (is-a? limited-stack%)
                   check-true)
               (~> stack->list
-                  (check-equal? '(b d c a))))))))
+                  (check-equal? '(b d c a)))))))
+  (test-case
+    "a non-empty stack can be shuffled into another"
+    (with-random-seed 42
+      (~> ((list->stack '(1 2 3 4))
+           (list->stack '(5 6)))
+          (send _ shuffle-in _)
+          stack->list
+          (check-equal? '(2 5 3 1 6 4)))))
+  (test-case
+    "an empty stack can be shuffled into a non-empty stack"
+    (with-random-seed 42
+      (~> ((list->stack '(1 2 3 4)) (list->stack '()))
+          (send _ shuffle-in _)
+          stack->list
+          (check-equal? '(2 4 3 1)))))
+  (test-case
+    "a non-empty stack can be shuffled into an empty stack"
+    (with-random-seed 42
+      (~> ((list->stack '()) (list->stack '(1 2 3 4)))
+          (send _ shuffle-in _)
+          stack->list
+          (check-equal? '(2 4 3 1))))))
 
 
 (define nonempty-stack%
@@ -80,13 +118,6 @@
           (-< (~> rest
                   list->stack)
               first)))
-
-    ;; (define (stack-shuffle)
-    ;;   (~> (this)
-    ;;       stack->list
-    ;;       shuffle
-    ;;       list->stack))
-    ;; (public [stack-shuffle shuffle])
 
     (define/override (empty?) #f)))
 
