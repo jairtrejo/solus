@@ -9,13 +9,24 @@
 (require "stack.rkt")
 (require "qi-class.rkt")
 (require "card.rkt")
+(require "ui.rkt")
 
 
 (define board
   (interface ()
              draw-card
              discard
-             shuffle-into-deck))
+             shuffle-into-deck
+             age-player
+             damage-ship))
+
+
+(define (ship-damage-changed ship-damage)
+  ((ui) `(ship-damage-changed ,ship-damage)))
+
+
+(define (player-age-changed player-age)
+  ((ui) `(player-age-changed ,player-age)))
 
 
 (define board%
@@ -24,38 +35,52 @@
 
     (init-field [deck (list->stack '())]
                 [graveyard (list->stack '())]
-                [lost (list->stack '())])
+                [lost (list->stack '())]
+                [player-age 0]
+                [ship-damage 0])
 
     (define/public (draw-card)
       (~> (deck)
           (if (send empty?) _ (send take))
-          (==* (new board% [deck _]
-                           [graveyard graveyard]
-                           [lost lost])
-               _)))
+          (==* (clone #:deck _) _)))
 
     (define/public (discard c #:stack [destination #f])
       (match destination
-        ['graveyard (new board% [deck deck]
-                                [lost lost]
-                                [graveyard (send graveyard put c)])]
-        ['lost (new board% [deck deck]
-                           [graveyard graveyard]
-                           [lost (send lost put c)])]
+        ['graveyard (clone #:graveyard (send graveyard put c))]
+        ['lost (clone #:lost (send lost put c))]
         [_ this]))
 
     (define/public (shuffle-into-deck #:stack source)
       (match source
-        ['graveyard (new board% [deck (send deck shuffle-in graveyard)]
-                                [lost lost]
-                                [graveyard (list->stack '())])]
-        ['lost (new board% [deck (send deck shuffle-in lost)]
-                           [graveyard graveyard]
-                           [lost (list->stack '())])]
-        [(? stack? s) (new board% [deck (send deck shuffle-in s)]
-                                  [graveyard graveyard]
-                                  [lost lost])]
-        [_ this]))))
+        ['graveyard (clone #:deck (send deck shuffle-in graveyard)
+                           #:graveyard (list->stack '()))]
+        ['lost (clone #:deck (send deck shuffle-in lost)
+                      #:lost (list->stack '()))]
+        [(? stack? s) (clone #:deck (send deck shuffle-in s))]
+        [_ this]))
+
+    (define/public (age-player [years 10])
+      (~> (player-age)
+          (+ years)
+          (-< (effect player-age-changed ground)
+              (clone #:player-age _))))
+
+    (define/public (damage-ship [damage -1])
+      (~> (ship-damage)
+          (+ damage)
+          (-< (effect ship-damage-changed ground)
+              (clone #:ship-damage _))))
+
+    (define (clone #:deck [deck deck]
+                   #:graveyard [graveyard graveyard]
+                   #:lost [lost lost]
+                   #:player-age [player-age player-age]
+                   #:ship-damage [ship-damage ship-damage])
+      (new board% [deck deck]
+                  [graveyard graveyard]
+                  [lost lost]
+                  [player-age player-age]
+                  [ship-damage ship-damage]))))
 
 
 (define initial-board
@@ -73,6 +98,7 @@
 
 (module+ board%-tests
   (require (submod ".." examples))
+  (require (submod "ui.rkt" examples))
   (test-case
     "a card can be drawn"
     (~> ((board-with-deck '(a b c)))
@@ -143,7 +169,35 @@
         (send shuffle-into-deck #:stack (list->stack '(x)))
         (~> (get-field deck _)
             stack->list
-            (check-equal? '(x))))))
+            (check-equal? '(x)))))
+  (test-case
+    "the player can be aged"
+    (parameterize ([ui (test-ui `((player-age-changed 10)))])
+      (~> (initial-board)
+          (send age-player)
+          (get-field player-age _)
+          (check-equal? 10))))
+  (test-case
+    "the player can be aged a specific amount"
+    (parameterize ([ui (test-ui `((player-age-changed 30)))])
+      (~> (initial-board)
+          (send age-player 30)
+          (get-field player-age _)
+          (check-equal? 30))))
+  (test-case
+    "the ship can be damaged"
+    (parameterize ([ui (test-ui `((ship-damage-changed -1)))])
+      (~> (initial-board)
+          (send damage-ship)
+          (get-field ship-damage _)
+          (check-equal? -1))))
+  (test-case
+    "the ship can be damaged a specific amount"
+    (parameterize ([ui (test-ui `((ship-damage-changed -2)))])
+      (~> (initial-board)
+          (send damage-ship -2)
+          (get-field ship-damage _)
+          (check-equal? -2)))))
 
 
 (module+ test

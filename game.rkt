@@ -15,9 +15,6 @@
 (define-qi-foreign-syntaxes check-match)
 
 
-(define ui (make-parameter terminal-ui))
-
-
 (define-flow chose-new?
   (gen (string=? "n" ((ui) '(choose-card)))))
 
@@ -89,8 +86,8 @@
   (when (~> (block 1) live?)
         (~> (==* _ reveal-card)
             (group 2 (~> (== _ (as revealed-card))
-                         (~>> (send revealed-card resolve (ui))
-                              (send revealed-card discard (ui))
+                         (~>> (send revealed-card resolve)
+                              (send revealed-card discard)
                               (send _ draw-card)))
                      _))))
 

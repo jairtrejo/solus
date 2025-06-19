@@ -4,7 +4,7 @@
 
 (require rackunit)
 
-(provide terminal-ui)
+(provide ui)
 
 
 (define terminal-ui
@@ -28,6 +28,9 @@
         ['(game-over) (displayln "Game over")]
         [msg (displayln msg)
              (loop (yield))]))))
+
+
+(define ui (make-parameter terminal-ui))
 
 
 (module+ examples

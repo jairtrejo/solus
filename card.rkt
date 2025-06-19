@@ -2,23 +2,26 @@
 
 (provide all-cards dummy-card%)
 
+(require "ui.rkt")
+
 (define card
   (interface ()
              resolve
              discard))
 
+;TODO: Put dummy-card% in a test module
 (define dummy-card%
   (class* object% (card)
     (super-new)
 
     (init-field name)
 
-    (define/public (resolve ui the-board)
-      (ui `(resolving-card ,name))
+    (define/public (resolve the-board)
+      ((ui) `(resolving-card ,name))
       the-board)
 
-    (define/public (discard ui the-board)
-      (ui `(discarding graveyard ,name))
+    (define/public (discard the-board)
+      ((ui) `(discarding graveyard ,name))
       (send the-board discard this #:stack 'graveyard))))
       
 
