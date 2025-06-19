@@ -88,9 +88,9 @@
 (define-flow main-loop
   (when (~> (block 1) live?)
         (~> (==* _ reveal-card)
-            (group 2 (~> (== _ (as current-card))
-                         (~>> (send current-card resolve (ui))
-                              (send current-card discard ui)
+            (group 2 (~> (== _ (as revealed-card))
+                         (~>> (send revealed-card resolve (ui))
+                              (send revealed-card discard (ui))
                               (send _ draw-card)))
                      _))))
 
@@ -99,10 +99,10 @@
   (require (submod "board.rkt" examples))
   (define test-board (board-with-deck (list (new dummy-card% [name 'c]))))
   (test-case
-    "reveals the new card, resolves it and replaces it from the deck"
+    "reveals the new card, resolves it, discards it and replaces it from the deck"
     (parameterize ([ui (test-ui `([(choose-card) "n"]
                                   (resolving-card a)
-                                  (discarding-card a)))])
+                                  (discarding graveyard a)))])
       (~> (test-board (new dummy-card% [name 'a]) (new dummy-card% [name 'b]))
           main-loop
           (block 1)
@@ -112,7 +112,8 @@
   (test-case
     "reveals the old card, resolves it and replaces it from the deck"
     (parameterize ([ui (test-ui `([(choose-card) "o"]
-                                  (resolving-card b)))])
+                                  (resolving-card b)
+                                  (discarding graveyard b)))])
       (~> (test-board (new dummy-card% [name 'a]) (new dummy-card% [name 'b]))
           main-loop
           (block 1)
@@ -128,7 +129,8 @@
   (test-case
     "does not replace card when deck is empty"
     (parameterize ([ui (test-ui `((auto-reveal)
-                                  (resolving-card c)))])
+                                  (resolving-card c)
+                                  (discarding graveyard c)))])
       (~> (empty-board (new dummy-card% [name 'c]))
           main-loop
           count

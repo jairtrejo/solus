@@ -18,8 +18,8 @@
       the-board)
 
     (define/public (discard ui the-board)
-      (ui `(discarding-to-graveyard ,name))
-      (send the-board discard #:stack 'graveyard))))
+      (ui `(discarding graveyard ,name))
+      (send the-board discard this #:stack 'graveyard))))
       
 
 (define all-cards
