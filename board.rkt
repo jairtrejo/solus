@@ -17,16 +17,20 @@
              draw-card
              discard
              shuffle-into-deck
-             age-player
-             damage-ship))
+             age-pilot
+             pilot-dead?
+             damage-ship
+             ship-destroyed?))
 
 
-(define (ship-damage-changed ship-damage)
-  ((ui) `(ship-damage-changed ,ship-damage)))
+(define (ui-pilot-aged years age)
+  ((ui) `(pilot-aged #:years ,years #:age ,age)))
 
+(define (ui-ship-damaged damage total-damage)
+  ((ui) `(ship-damaged #:damage ,damage #:total-damage ,total-damage)))
 
-(define (player-age-changed player-age)
-  ((ui) `(player-age-changed ,player-age)))
+(define (ui-ship-evaded)
+  ((ui) '(ship-evaded)))
 
 
 (define board%
@@ -36,7 +40,8 @@
     (init-field [deck (list->stack '())]
                 [graveyard (list->stack '())]
                 [lost (list->stack '())]
-                [player-age 0]
+                ;TODO Break out ship and pilot into their own classes
+                [pilot-age 0]
                 [ship-damage 0])
 
     (define/public (draw-card)
@@ -59,27 +64,39 @@
         [(? stack? s) (clone #:deck (send deck shuffle-in s))]
         [_ this]))
 
-    (define/public (age-player [years 10])
-      (~> (player-age)
-          (+ years)
-          (-< (effect player-age-changed ground)
-              (clone #:player-age _))))
+    (define/public (age-pilot [years 10])
+      (~> (years)
+          (+ pilot-age)
+          (effect (ui-pilot-aged years _))
+          (clone #:pilot-age _)))
+
+    (define/public (pilot-dead?)
+      (~> (pilot-age)
+          (> 90)))
 
     (define/public (damage-ship [damage -1])
-      (~> (ship-damage)
-          (+ damage)
-          (-< (effect ship-damage-changed ground)
-              (clone #:ship-damage _))))
+      (~> (damage)
+          (if zero?
+              (~> (gen ship-damage)
+                  (effect (~> ground ui-ship-evaded)))
+              (~>> (+ ship-damage)
+                   (effect (ui-ship-damaged damage _))))
+          (clone #:ship-damage _)))
 
+    (define/public (ship-destroyed?)
+      (~> (ship-damage)
+          (< -9)))
+
+    ;TODO: Write a define/clone macro
     (define (clone #:deck [deck deck]
                    #:graveyard [graveyard graveyard]
                    #:lost [lost lost]
-                   #:player-age [player-age player-age]
+                   #:pilot-age [pilot-age pilot-age]
                    #:ship-damage [ship-damage ship-damage])
       (new board% [deck deck]
                   [graveyard graveyard]
                   [lost lost]
-                  [player-age player-age]
+                  [pilot-age pilot-age]
                   [ship-damage ship-damage]))))
 
 
@@ -171,33 +188,89 @@
             stack->list
             (check-equal? '(x)))))
   (test-case
-    "the player can be aged"
-    (parameterize ([ui (test-ui `((player-age-changed 10)))])
+    "the pilot can be aged"
+    (parameterize ([ui (test-ui `((pilot-aged #:years 10 #:age 10)))])
       (~> (initial-board)
-          (send age-player)
-          (get-field player-age _)
+          (send age-pilot)
+          (get-field pilot-age _)
           (check-equal? 10))))
   (test-case
-    "the player can be aged a specific amount"
-    (parameterize ([ui (test-ui `((player-age-changed 30)))])
+    "the pilot can be aged a specific amount"
+    (parameterize ([ui (test-ui `((pilot-aged #:years 30 #:age 30)))])
       (~> (initial-board)
-          (send age-player 30)
-          (get-field player-age _)
+          (send age-pilot 30)
+          (get-field pilot-age _)
           (check-equal? 30))))
   (test-case
+    "the pilot can be aged multiple times"
+    (parameterize ([ui (test-ui `((pilot-aged #:years 30 #:age 30)
+                                  (pilot-aged #:years 10 #:age 40)))])
+      (~> (initial-board)
+          (send age-pilot 30)
+          (send age-pilot)
+          (get-field pilot-age _)
+          (check-equal? 40))))
+  (test-case
+    "the pilot is not dead initially"
+    (~> (initial-board)
+        (send pilot-dead?)
+        check-false))
+  (test-case
+    "the pilot can be killed by aging them"
+    (parameterize ([ui (test-ui `((pilot-aged #:years 100 #:age 100)))])
+      (~> (initial-board)
+          (send age-pilot 100)
+          (send pilot-dead?)
+          check-true)))
+  (test-case
     "the ship can be damaged"
-    (parameterize ([ui (test-ui `((ship-damage-changed -1)))])
+    (parameterize ([ui (test-ui `((ship-damaged #:damage -1 #:total-damage -1)))])
       (~> (initial-board)
           (send damage-ship)
           (get-field ship-damage _)
           (check-equal? -1))))
   (test-case
     "the ship can be damaged a specific amount"
-    (parameterize ([ui (test-ui `((ship-damage-changed -2)))])
+    (parameterize ([ui (test-ui `((ship-damaged #:damage -2 #:total-damage -2)))])
       (~> (initial-board)
           (send damage-ship -2)
           (get-field ship-damage _)
-          (check-equal? -2)))))
+          (check-equal? -2))))
+  (test-case
+    "the ship can be damaged multiple times"
+    (parameterize ([ui (test-ui `((ship-damaged #:damage -2 #:total-damage -2)
+                                  (ship-damaged #:damage -1 #:total-damage -3)))])
+      (~> (initial-board)
+          (send damage-ship -2)
+          (send damage-ship)
+          (get-field ship-damage _)
+          (check-equal? -3))))
+  (test-case
+    "the ship is not destroyed initially"
+    (~> (initial-board)
+        (send ship-destroyed?)
+        check-false))
+  (test-case
+    "the ship can be damaged without destroying it"
+    (parameterize ([ui (test-ui `((ship-damaged #:damage -1 #:total-damage -1)))])
+      (~> (initial-board)
+          (send damage-ship)
+          (send ship-destroyed?)
+          check-false)))
+  (test-case
+    "the ship can be destroyed by damaging it"
+    (parameterize ([ui (test-ui `((ship-damaged #:damage -10 #:total-damage -10)))])
+      (~> (initial-board)
+          (send damage-ship -10)
+          (send ship-destroyed?)
+          check-true)))
+  (test-case
+    "the ship can evade damage"
+    (parameterize ([ui (test-ui `((ship-evaded)))])
+      (~> (initial-board)
+          (send damage-ship 0)
+          (send ship-destroyed?)
+          check-false))))
 
 
 (module+ test

@@ -11,7 +11,6 @@
   (generator (init-msg)
     (displayln "Solus lost")
     (let loop ([msg init-msg])
-      (displayln "")
       (match msg
         ['(quit) (displayln "Game over")]
         ['(roll d20) (displayln "Press enter to roll a d20")
@@ -25,6 +24,10 @@
                             (define choice (string-trim (read-line)))
                             (if (member choice '("n" "o")) choice (loop))))
                         (loop (yield choice))]
+        [(list 'pick-action options ...) (displayln "What do you want to do?")
+                                         (displayln options)
+                                         (define choice (string->number (read-line)))
+                                         (loop (yield (list-ref options choice)))]
         ['(game-over) (displayln "Game over")]
         [msg (displayln msg)
              (loop (yield))]))))
@@ -35,6 +38,7 @@
 
 (module+ examples
   (provide test-ui)
+  ;TODO: Write a "with-test-ui" helper to parameterize and verify no leftovers
   (define (test-ui msg-descs)
     (generator (init-msg)
       (let loop ([msg-descs msg-descs]

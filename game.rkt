@@ -46,6 +46,7 @@
           (check-equal? '(1 2 3))))))
 
 
+;TODO announce revealed card
 (define-switch reveal-card
   (% count _)
   [(= 2) (if chose-new? _ X)]
@@ -82,8 +83,15 @@
         check-false)))
 
 
+(define-flow game-over
+  (~> (==* (-< (send pilot-dead?)
+               (send ship-destroyed?))
+           (~> live? NOT))
+      any?))
+
+
 (define-flow main-loop
-  (when (~> (block 1) live?)
+  (when (~> game-over NOT)
         (~> (==* _ reveal-card)
             (group 2 (~> (== _ (as revealed-card))
                          (~>> (send revealed-card resolve)
@@ -94,6 +102,7 @@
 (module+ main-loop-tests
   (require (submod "ui.rkt" examples))
   (require (submod "board.rkt" examples))
+  (require (submod "card.rkt" examples))
   (define test-board (board-with-deck (list (new dummy-card% [name 'c]))))
   (test-case
     "reveals the new card, resolves it, discards it and replaces it from the deck"
@@ -131,7 +140,29 @@
       (~> (empty-board (new dummy-card% [name 'c]))
           main-loop
           count
-          (check-equal? 1)))))
+          (check-equal? 1))))
+  (test-case
+    "returns no values when pilot is dead"
+    (parameterize ([ui (test-ui `((auto-reveal)
+                                  (killing-pilot)
+                                  (pilot-aged #:years 100 #:age 100)
+                                  (discarding void pilot-killer)))])
+      (~> (test-board (new pilot-killer-card%))
+        main-loop
+        main-loop
+        live?
+        check-false)))
+  (test-case
+    "returns no values when ship is destroyed"
+    (parameterize ([ui (test-ui `((auto-reveal)
+                                  (destroying-ship)
+                                  (ship-damaged #:damage -10 #:total-damage -10)
+                                  (discarding void ship-destroyer)))])
+      (~> (test-board (new ship-destroyer-card%))
+        main-loop
+        main-loop
+        live?
+        check-false))))
 
 
 (module+ main
