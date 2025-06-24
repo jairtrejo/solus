@@ -11,6 +11,7 @@
 
 (define card
   (interface ()
+             describe
              resolve
              discard))
 
@@ -26,6 +27,9 @@
       (super-new)
 
       (init-field name)
+
+      (define/public (describe)
+        ((ui) `(describe-card ,name)))
 
       (define/public (resolve the-board)
         ((ui) `(resolving-card ,name))
@@ -86,7 +90,7 @@
   (class object%
     (super-new)
     (init-field defense attack life)
-    
+
     ;TODO: Separate into damage-in (calculation) and damage (imperative)
     (define/public (damage-in roll)
       (~> (roll)
@@ -208,7 +212,7 @@
 (define encounter-card%
   (class* object% (encounter-card)
     (super-new)
-    (abstract discard pick-action make-enemy)
+    (abstract describe discard pick-action make-enemy)
 
     (define/public (warp board enemy)
       (~> (board enemy)
@@ -240,6 +244,9 @@
       (super-new)
 
       (init-field name)
+
+      (define/override (describe)
+        ((ui) `(describe-card ,name)))
 
       (define/override (discard the-board)
         (send the-board discard this))
@@ -354,6 +361,12 @@
   (class* encounter-card% (card)
     (super-new)
 
+    (define/override (describe)
+      ((ui) `(describe-card
+               #:name "Plasma cruiser"
+               #:text "Initiating warp drive causes you to age +30 years"
+               #:defense 14 #:attack 5 #:life 3)))
+
     (define/override (make-enemy)
       (new enemy% [defense 14]
                   [attack 5]
@@ -376,6 +389,8 @@
 
 
 ;; (define-card/encounter plasma-cruiser-card%
+;;   #:name "Plasma cruiser"
+;;   #:text "Initiating warp drive causes you to age +30 years"
 ;;   (stats #:defense 14 #:attack 5 #:life 3)
 ;;
 ;;   (when warp
@@ -393,28 +408,20 @@
            ship-destroyer-card%)
 
   (define pilot-killer-card%
-    (class* object% (card)
-      (super-new)
+    (class* dummy-card% (card)
+      (super-new [name 'pilot-killer])
 
-      (define/public (resolve the-board)
+      (define/override (resolve the-board)
         ((ui) `(killing-pilot))
-        (send the-board age-pilot 100))
-
-      (define/public (discard the-board)
-        ((ui) `(discarding void pilot-killer))
-        the-board)))
+        (send the-board age-pilot 100))))
 
   (define ship-destroyer-card%
-    (class* object% (card)
-      (super-new)
+    (class* dummy-card% (card)
+      (super-new [name 'ship-destroyer])
 
-      (define/public (resolve the-board)
+      (define/override (resolve the-board)
         ((ui) `(destroying-ship))
-        (send the-board damage-ship -10))
-
-      (define/public (discard the-board)
-        ((ui) `(discarding void ship-destroyer))
-        the-board))))
+        (send the-board damage-ship -10)))))
 
 
 (module+ test
