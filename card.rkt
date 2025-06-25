@@ -267,23 +267,7 @@
 (module+ encounter-card%-tests
   (require (submod ".." examples))
   (require (submod "ui.rkt" examples))
-  ; Workaround for https://github.com/racket/racket/issues/1101
-  (define test-board
-    (new (class object%
-           (super-new)
-           (init-field [dead #f] [destroyed #f])
-           (define/public (age-pilot years)
-             (if (> years 0)
-                 (new this% [dead #t] [destroyed destroyed])
-                 this))
-           (define/public (pilot-dead?)
-             dead)
-           (define/public (damage-ship [damage -1])
-             (if (< damage 0)
-                 (new this% [dead dead] [destroyed #t])
-                 this))
-           (define/public (ship-destroyed?)
-             destroyed))))
+  (define test-board (new test-board%))
   (define test-card (new dummy-encounter-card% [name 'enemy-ship]))
   (define test-enemy (new enemy% [defense 14] [attack 5] [life 3]))
   (test-case
@@ -356,7 +340,6 @@
   ((ui) `(announce-card ,@card)))
   
 
-;TODO: Write tests for plasma cruiser
 (define plasma-cruiser-card%
   (class* encounter-card% (card)
     (super-new)
@@ -388,6 +371,25 @@
       ((ui) `(pick-action ,@available-actions)))))
 
 
+(module+ plasma-cruiser-card%-tests
+  (require (submod ".." examples))
+  (require (submod "ui.rkt" examples))
+  (test-case
+    "warping ages you 30 years"
+    (define test-board
+      (new (class test-board%
+             (super-new)
+             (define/override (age-pilot years)
+               (check-equal? years 30)
+               (super age-pilot years)))))
+    (parameterize ([ui (test-ui '([(pick-action battle warp) warp]))])
+      (~> ((new plasma-cruiser-card%))
+          (send resolve test-board)
+          (send pilot-dead?)
+          check-true))))
+        
+
+
 ;; (define-card/encounter plasma-cruiser-card%
 ;;   #:name "Plasma cruiser"
 ;;   #:text "Initiating warp drive causes you to age +30 years"
@@ -405,7 +407,8 @@
 
 (module+ examples
   (provide pilot-killer-card%
-           ship-destroyer-card%)
+           ship-destroyer-card%
+           test-board%)
 
   (define pilot-killer-card%
     (class* dummy-card% (card)
@@ -421,10 +424,28 @@
 
       (define/override (resolve the-board)
         ((ui) `(destroying-ship))
-        (send the-board damage-ship -10)))))
+        (send the-board damage-ship -10))))
+  ; Workaround for https://github.com/racket/racket/issues/1101
+  (define test-board%
+    (class object%
+       (super-new)
+       (init-field [dead #f] [destroyed #f])
+       (define/public (age-pilot years)
+         (if (> years 0)
+             (new this% [dead #t] [destroyed destroyed])
+             this))
+       (define/public (pilot-dead?)
+         dead)
+       (define/public (damage-ship [damage -1])
+         (if (< damage 0)
+             (new this% [dead dead] [destroyed #t])
+             this))
+       (define/public (ship-destroyed?)
+         destroyed))))
 
 
 (module+ test
   (require (submod ".." card?-tests))
   (require (submod ".." enemy%-tests))
-  (require (submod ".." encounter-card%-tests)))
+  (require (submod ".." encounter-card%-tests))
+  (require (submod ".." plasma-cruiser-card%-tests)))
