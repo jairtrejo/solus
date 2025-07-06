@@ -95,7 +95,6 @@
             (group 2 (~> (== _ (~> (effect (send describe))
                                    (as revealed-card)))
                          (~>> (send revealed-card resolve)
-                              (send revealed-card discard)
                               (send _ draw-card)))
                      _))))
 
@@ -105,7 +104,7 @@
   (require (submod "card.rkt" examples))
   (define test-board (board-with-deck (list (new dummy-card% [name 'c]))))
   (test-case
-    "reveals the new card, resolves it, discards it and replaces it from the deck"
+    "reveals the new card, resolves it and replaces it from the deck"
     (parameterize ([ui (test-ui `([(choose-card) "n"]
                                   (describe-card a)
                                   (resolving-card a)

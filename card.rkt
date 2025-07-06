@@ -12,8 +12,7 @@
 (define card
   (interface ()
              describe
-             resolve
-             discard))
+             resolve))
 
 
 (define-flow card? (is-a? card))
@@ -33,11 +32,7 @@
 
       (define/public (resolve the-board)
         ((ui) `(resolving-card ,name))
-        the-board)
-
-      (define/public (discard the-board)
-        ((ui) `(discarding graveyard ,name))
-        (send the-board discard this #:stack 'graveyard)))))
+        the-board))))
 
 
 (module+ card?-tests
@@ -74,7 +69,7 @@
 (define enemy
   (interface () damage-in
                 damage-out
-                defeat
+                damage
                 defeated?))
 
 
@@ -91,20 +86,12 @@
     (super-new)
     (init-field defense attack life)
 
-    ;TODO: Separate into damage-in (calculation) and damage (imperative)
     (define/public (damage-in roll)
       (~> (roll)
           (switch
             [(>= defense) roll->enemy-damage]
             [(<= attack) 0]
-            [else 1])
-          (if zero?
-              (~> (gen life)
-                  (effect (~> ground ui-enemy-evaded)))
-              (~>> (effect (as damage))
-                   (- life)
-                   (effect (ui-enemy-damaged damage _))))
-          (clone #:life _)))
+            [else 1])))
     
     (define/public (damage-out roll)
       (~> (roll)
@@ -113,11 +100,16 @@
             [(>= defense) 0]
             [else -1])))
 
-    (define/public (defeat)
-      (clone #:life 0))
+    (define/public (damage amount)
+      (~> (amount)
+          (- life _)
+          (effect (if (gen (zero? amount))
+                      (~> ground ui-enemy-evaded)
+                      (ui-enemy-damaged amount _)))
+          (clone #:life _)))
 
     (define/public (defeated?)
-      (< life 1))
+      (not (positive? life)))
 
     (define (clone #:defense [defense defense]
                    #:attack [attack attack]
@@ -131,45 +123,42 @@
   (require (submod "ui.rkt" examples))
   (define test-enemy (new enemy% [defense 14] [attack 5] [life 3]))
   (test-case
-    "can be damaged by rolls above defense"
-    (parameterize ([ui (test-ui '((enemy-damaged #:damage 4 #:life -1)))])
-      (~> (test-enemy)
-          (send damage-in 20)
-          (get-field life _)
-          (check-equal? -1))))
+    "rolls above defense cause damage"
+    (~> (test-enemy)
+        (send damage-in 20)
+        (check-equal? 4)))
   (test-case
-    "can be damaged by rolls equal to defense"
-    (parameterize ([ui (test-ui '((enemy-damaged #:damage 1 #:life 2)))])
-      (~> (test-enemy)
-          (send damage-in 14)
-          (get-field life _)
-          (check-equal? 2))))
+    "rolls equal to defense cause damage"
+    (~> (test-enemy)
+        (send damage-in 14)
+        (check-equal? 1)))
   (test-case
-    "is damaged 1 in rolls below defense but above attack"
-    (parameterize ([ui (test-ui '((enemy-damaged #:damage 1 #:life 2)))])
-      (~> (test-enemy)
-        (send damage-in 13)
-        (get-field life _)
-        (check-equal? 2))))
+    "rolls below defense but above attack cause 1 damage"
+    (~> (test-enemy)
+        (send damage-in 10)
+        (check-equal? 1)))
   (test-case
-    "is not damaged in rolls equal to attack"
-    (parameterize ([ui (test-ui '((enemy-evaded)))])
-      (~> (test-enemy)
+    "rolls equal to attack cause no damage"
+    (~> (test-enemy)
         (send damage-in 5)
-        (get-field life _)
-        (check-equal? 3))))
+        (check-equal? 0)))
   (test-case
-    "is not damaged in rolls below to attack"
-    (parameterize ([ui (test-ui '((enemy-evaded)))])
+    "rolls bellow attack cause no damage"
+    (~> (test-enemy)
+        (send damage-in 1)
+        (check-equal? 0)))
+  (test-case
+    "being damaged decreases life"
+    (parameterize ([ui (test-ui '((enemy-damaged #:damage 2 #:life 1)))])
       (~> (test-enemy)
-        (send damage-in 4)
+        (send damage 2)
         (get-field life _)
-        (check-equal? 3))))
+        (check-equal? 1))))
   (test-case
     "it is defeated after being damaged enough"
     (parameterize ([ui (test-ui '((enemy-damaged #:damage 4 #:life -1)))])
       (~> (test-enemy)
-        (send damage-in 20)
+        (send damage 4)
         (send defeated?)
         check-true)))
   (test-case
@@ -199,41 +188,49 @@
       (check-equal? 0))))
 
 
-(define (user-roll)
+(define (ui-user-roll)
   ((ui) '(roll d20)))
 
 
 (define encounter-card
-  (interface (card)
-             make-enemy
-             pick-action))
+  (interface (card)))
 
 
 (define encounter-card%
   (class* object% (encounter-card)
     (super-new)
-    (abstract describe discard pick-action make-enemy)
+    (abstract describe discard make-enemy)
 
     (define/public (warp board enemy)
-      (~> (board enemy)
-          (== (send age-pilot 10) (send defeat))))
+      (~> (board)
+          (send age-pilot 10)
+          (send discard this #:stack 'lost)))
 
     (define/public (battle board enemy)
-      (~> ((user-roll))
+      (~> ((ui-user-roll))
           (-< (~>> (send enemy damage-out)
                    (send board damage-ship))
-              (send enemy damage-in _))))
+              (~>> (send enemy damage-in)
+                   (send enemy damage)))
+          (if (or% (send ship-destroyed?)
+                   (send defeated?))
+              (~> 1> (send this discard _))
+              _)))
+
+    (define/public (available-actions)
+      (list 'battle 'warp))
+
+    (define/public (ui-pick-action)
+      ((ui) `(pick-action ,@(available-actions))))
 
     (define/public (resolve board)
       (~> (board (make-enemy))
           (feedback
-            (while (~> (== (-< (send pilot-dead?)
-                               (send ship-destroyed?))
-                           (send defeated?))
-                       none?))
-            (~>> (-< (gen (send this pick-action)) _)
-                 (dynamic-send this)))
-          (select 1)))))
+            (while (~> count (> 1)))
+            (~> (effect (~> ground
+                            (gen (send this ui-pick-action))
+                            (as user-action)))
+                (dynamic-send this user-action _ _)))))))
 
 
 (module+ examples
@@ -251,13 +248,6 @@
       (define/override (discard the-board)
         (send the-board discard this))
 
-      (define available-actions
-        (list 'battle
-              'warp))
-
-      (define/override (pick-action)
-        ((ui) `(pick-action ,@available-actions)))
-
       (define/override (make-enemy)
         (new enemy% [defense 14]
                     [attack 5]
@@ -270,12 +260,13 @@
   (define test-board (new test-board%))
   (define test-card (new dummy-encounter-card% [name 'enemy-ship]))
   (define test-enemy (new enemy% [defense 14] [attack 5] [life 3]))
+  (define-flow check-enemy-gone (~> count (check-equal? 1)))
   (test-case
-    "warping ages the pilot 10 years and defeats the enemy"
+    "warping ages the pilot 10 years and removes the enemy"
     (~> (test-card)
         (send warp test-board test-enemy)
-        (== (send pilot-dead?) (send defeated?))
-        all?
+        (effect check-enemy-gone)
+        (send pilot-aged?)
         check-true))
   (test-case
     "battling can defeat the enemy"
@@ -283,16 +274,13 @@
                                   (enemy-damaged #:damage 4 #:life -1)))])
       (~> (test-card)
           (send battle test-board test-enemy)
-          2>
-          (send defeated?)
-          check-true)))
+          (effect check-enemy-gone))))
   (test-case
     "battling can destroy the ship"
     (parameterize ([ui (test-ui `([(roll d20) 1]
                                   (enemy-evaded)))])
       (~> (test-card)
           (send battle test-board test-enemy)
-          1>
           (send ship-destroyed?)
           check-true)))
   (test-case
@@ -302,7 +290,6 @@
                                   (enemy-damaged #:damage 4 #:life -1)))])
       (~> (test-card)
           (send resolve test-board)
-          1>
           (send ship-destroyed?)
           check-false)))
   (test-case
@@ -312,7 +299,6 @@
                                   (enemy-evaded)))])
       (~> (test-card)
           (send resolve test-board)
-          1>
           (send ship-destroyed?)
           check-true)))
   (test-case
@@ -320,7 +306,6 @@
     (parameterize ([ui (test-ui `([(pick-action battle warp) warp]))])
       (~> (test-card)
           (send resolve test-board)
-          1>
           (send ship-destroyed?)
           check-false)))
   (test-case
@@ -335,9 +320,19 @@
           check-false))))
 
 
+;
+; SPECIFIC CARDS
+;
 
-(define (announce-card . card)
-  ((ui) `(announce-card ,@card)))
+;; (define-card/encounter plasma-cruiser-card%
+;;   #:name "Plasma cruiser"
+;;   #:stats (#:defense 14 #:attack 5 #:life 3)
+;;   #:text "Initiating warp drive causes you to age +30 years"
+;;
+;;   (when warp
+;;     (send age-pilot 30)
+;;
+;;   #:discard graveyard)
   
 
 (define plasma-cruiser-card%
@@ -359,16 +354,9 @@
       (send board discard this #:stack 'graveyard))
 
     (define/override (warp board enemy)
-      (~> (board enemy)
-          (== (send age-pilot 30) (send defeat))))
-
-    (define available-actions
-      (list 'battle
-            'warp))
-
-    ;TODO Make available-actions a method and move this to encounter-card%
-    (define/override (pick-action)
-      ((ui) `(pick-action ,@available-actions)))))
+      (~> (board)
+          (send age-pilot 30)
+          (send discard this #:stack 'lost)))))
 
 
 (module+ plasma-cruiser-card%-tests
@@ -387,22 +375,54 @@
           (send resolve test-board)
           (send pilot-dead?)
           check-true))))
-        
 
-
-;; (define-card/encounter plasma-cruiser-card%
-;;   #:name "Plasma cruiser"
-;;   #:text "Initiating warp drive causes you to age +30 years"
-;;   (stats #:defense 14 #:attack 5 #:life 3)
-;;
-;;   (when warp
-;;     (== (send age-pilot 30) (send defeat)))
+;; (define-card/encounter marauder-card%
+;;   #:name "Marauder"
+;;   #:text "You can't initiate warp drive."
+;;   #:stats (#:defense 17 #:attack 8 #:life 2)
+;;   
+;;   #:disable-action warp
 ;;
 ;;   #:discard graveyard)
+  
+
+(define marauder-card%
+  (class* encounter-card% (card)
+    (super-new)
+
+    (define/override (describe)
+      ((ui) `(describe-card
+               #:name "Marauder"
+               #:text "You can't initiate warp drive."
+               #:defense 17 #:attack 8 #:life 2)))
+
+    (define/override (make-enemy)
+      (new enemy% [defense 17]
+                  [attack 8]
+                  [life 2]))
+
+    (define/override (discard board)
+      (send board discard this #:stack 'graveyard))
+
+    (define/override (available-actions)
+      (~>> ((super available-actions))
+           (remove 'warp)))))
+
+
+(module+ marauder-card%-tests
+  (require (submod ".." examples))
+  (require (submod "ui.rkt" examples))
+  (test-case
+    "you can't warp away"
+    (parameterize ([ui (test-ui '([(pick-action battle) battle]))])
+      (~> ((new marauder-card%))
+          (send available-actions)
+          (check-equal? '(battle))))))
 
 
 (define all-cards
-  (list (new plasma-cruiser-card%)))
+  (list (new plasma-cruiser-card%)
+        (new marauder-card%)))
 
 
 (module+ examples
@@ -429,23 +449,25 @@
   (define test-board%
     (class object%
        (super-new)
-       (init-field [dead #f] [destroyed #f])
+       (init-field [aged #f] [damaged #f])
        (define/public (age-pilot years)
          (if (> years 0)
-             (new this% [dead #t] [destroyed destroyed])
+             (new this% [aged #t] [damaged damaged])
              this))
-       (define/public (pilot-dead?)
-         dead)
        (define/public (damage-ship [damage -1])
          (if (< damage 0)
-             (new this% [dead dead] [destroyed #t])
+             (new this% [aged aged] [damaged #t])
              this))
-       (define/public (ship-destroyed?)
-         destroyed))))
-
+       (define/public (pilot-aged?) aged)
+       (define/public (ship-damaged?) damaged)
+       ; Die in one "shot"
+       (define/public (pilot-dead?) aged)
+       (define/public (ship-destroyed?) damaged)
+       (define/public (discard c #:stack [destination #f]) this))))
 
 (module+ test
   (require (submod ".." card?-tests))
   (require (submod ".." enemy%-tests))
   (require (submod ".." encounter-card%-tests))
-  (require (submod ".." plasma-cruiser-card%-tests)))
+  (require (submod ".." plasma-cruiser-card%-tests))
+  (require (submod ".." marauder-card%-tests)))

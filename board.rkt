@@ -70,6 +70,7 @@
           (effect (ui-pilot-aged years _))
           (clone #:pilot-age _)))
 
+    ;TODO: Replace with just game-over?
     (define/public (pilot-dead?)
       (~> (pilot-age)
           (> 90)))
