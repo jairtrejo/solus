@@ -18,9 +18,7 @@
              discard
              shuffle-into-deck
              age-pilot
-             pilot-dead?
-             damage-ship
-             ship-destroyed?))
+             damage-ship))
 
 
 (define (ui-pilot-aged years age)
@@ -70,11 +68,6 @@
           (effect (ui-pilot-aged years _))
           (clone #:pilot-age _)))
 
-    ;TODO: Replace with just game-over?
-    (define/public (pilot-dead?)
-      (~> (pilot-age)
-          (> 90)))
-
     (define/public (damage-ship [damage -1])
       (~> (damage)
           (if zero?
@@ -84,9 +77,16 @@
                    (effect (ui-ship-damaged damage _))))
           (clone #:ship-damage _)))
 
+    (define/public (pilot-dead?)
+      (> pilot-age 90))
+
     (define/public (ship-destroyed?)
-      (~> (ship-damage)
-          (< -9)))
+      (< ship-damage -9))
+
+    (define/public (game-over?)
+      (~> (this)
+          (or (send pilot-dead?)
+              (send ship-destroyed?))))
 
     ;TODO: Write a define/clone macro
     (define (clone #:deck [deck deck]
@@ -214,14 +214,14 @@
   (test-case
     "the pilot is not dead initially"
     (~> (initial-board)
-        (send pilot-dead?)
+        (send game-over?)
         check-false))
   (test-case
     "the pilot can be killed by aging them"
     (parameterize ([ui (test-ui `((pilot-aged #:years 100 #:age 100)))])
       (~> (initial-board)
           (send age-pilot 100)
-          (send pilot-dead?)
+          (send game-over?)
           check-true)))
   (test-case
     "the ship can be damaged"
@@ -249,28 +249,28 @@
   (test-case
     "the ship is not destroyed initially"
     (~> (initial-board)
-        (send ship-destroyed?)
+        (send game-over?)
         check-false))
   (test-case
     "the ship can be damaged without destroying it"
     (parameterize ([ui (test-ui `((ship-damaged #:damage -1 #:total-damage -1)))])
       (~> (initial-board)
           (send damage-ship)
-          (send ship-destroyed?)
+          (send game-over?)
           check-false)))
   (test-case
     "the ship can be destroyed by damaging it"
     (parameterize ([ui (test-ui `((ship-damaged #:damage -10 #:total-damage -10)))])
       (~> (initial-board)
           (send damage-ship -10)
-          (send ship-destroyed?)
+          (send game-over?)
           check-true)))
   (test-case
     "the ship can evade damage"
     (parameterize ([ui (test-ui `((ship-evaded)))])
       (~> (initial-board)
           (send damage-ship 0)
-          (send ship-destroyed?)
+          (send game-over?)
           check-false))))
 
 

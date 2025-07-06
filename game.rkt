@@ -6,7 +6,6 @@
 (require rackunit)
 
 (require "board.rkt")
-(require "card.rkt")
 (require "qi-class.rkt")
 (require "stack.rkt")
 (require "ui.rkt")
