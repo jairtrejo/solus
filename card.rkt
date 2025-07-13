@@ -92,7 +92,8 @@
     (define/public (damage-in roll)
       (~> (roll)
           (effect (~>> (send this special-rolls)
-                       (and real? positive?)
+                       (gate (and real? positive?))
+                       (rectify #f)
                        (as special-damage-in)))
           (switch
             [(gen special-damage-in) (gen special-damage-in)]
@@ -103,7 +104,8 @@
     (define/public (damage-out roll)
       (~> (roll)
           (effect (~>> (send this special-rolls)
-                       (and real? negative?)
+                       (gate (and real? negative?))
+                       (rectify #f)
                        (as special-damage-out)))
           (switch
             [(gen special-damage-out) (gen special-damage-out)]
@@ -196,7 +198,49 @@
     "does not damage ship when roll is above defense"
     (~> (test-enemy)
       (send damage-out 20)
-      (check-equal? 0))))
+      (check-equal? 0)))
+  (test-case
+    "damages enemy if special roll is positive"
+    (define test-enemy
+      (new
+        (class enemy%
+          (super-new)
+          (define/override (special-rolls roll)
+            (cond
+              [(> roll 10) 999]
+              [else #f])))
+        [defense 14] [attack 5] [life 3]))
+    (~> (test-enemy)
+      (send damage-in 20)
+      (check-equal? 999)))
+  (test-case
+    "damages ship if special roll is positive"
+    (define test-enemy
+      (new
+        (class enemy%
+          (super-new)
+          (define/override (special-rolls roll)
+            (cond
+              [(< roll 10) -999]
+              [else #f])))
+        [defense 14] [attack 5] [life 3]))
+    (~> (test-enemy)
+      (send damage-out 1)
+      (check-equal? -999)))
+  (test-case
+    "damages normally if the roll is not special"
+    (define test-enemy
+      (new
+        (class enemy%
+          (super-new)
+          (define/override (special-rolls roll)
+            (cond
+              [(> roll 18) 999]
+              [else #f])))
+        [defense 14] [attack 5] [life 3]))
+    (~> (test-enemy)
+      (send damage-in 15)
+      (check-equal? 2))))
 
 
 (define (ui-user-roll)
@@ -505,7 +549,7 @@
 
 ;; (define-card/encounter nebula-raider-card%
 ;;   #:name "Nebula raider"
-;;   #:text "Roll 5 or less: take -2 damage"
+;;   #:text "Roll 5 or less: take -2 damage."
 ;;   #:stats (#:defense 12 #:attack 9 #:life 3)
 ;;
 ;;   (special-rolls
@@ -523,6 +567,70 @@
 ;;
 ;;   #:discard graveyard)
 
+
+(define nebula-raider-card%
+  (class* encounter-card% (card)
+    (super-new)
+
+    (define/override (describe)
+      ((ui) `(describe-card
+               #:name "Nebula raider"
+               #:text "Roll 5 or less: take -2 damage."
+               #:defense 12 #:attack 9 #:life 3)))
+
+    (define/override (make-enemy)
+      (new
+        (class enemy%
+          (super-new)
+          (define/override (special-rolls roll)
+            (cond
+              [(<= roll 5) -2]
+              [else #f])))
+        [defense 12] [attack 9] [life 3]))
+
+    (define/override (discard board)
+      (send board discard this #:stack 'graveyard))))
+
+
+(module+ nebula-raider-card%-tests
+  (require (submod ".." examples))
+  (require (submod "ui.rkt" examples))
+  (test-case
+    "rolling 5 or less causes -2 damage"
+    (define test-board
+      (new (class test-board%
+             (super-new)
+             (define/override (damage-ship damage)
+               (check-equal? damage -2)
+               (super damage-ship damage)))))
+    (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
+                                  [(roll d20) 5]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) warp]))])
+      (~> ((new nebula-raider-card%))
+          (send resolve test-board)
+          (send game-over?)
+          check-false)))
+  (test-case
+    "rolling 6 or more causes normal damage"
+    (define test-board
+      (new (class test-board%
+             (super-new)
+             (define/override (damage-ship damage)
+               (check-equal? damage -1)
+               (super damage-ship damage)))))
+    (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
+                                  [(roll d20) 6]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) warp]))])
+      (~> ((new nebula-raider-card%))
+          (send resolve test-board)
+          (send game-over?)
+          check-false))))
+
+
+;TODO: Thwart action
+
 ;; (define-card/encounter infestation-card%
 ;;   #:name "Infestation"
 ;;   #:text "You may roll. Every loss is -2 damage. Or you may take -4 damage to rid of the infestation immediately."
@@ -537,6 +645,9 @@
 ;;     (send board damage-ship -4))
 ;;
 ;;   #:discard lost)
+
+;TODO: keeping track of total-misses
+;TODO: miss and hit hooks (if they remove the enemy end the encounter)
 
 ;; (define-card/encounter time-eater-card%
 ;;   #:name "Time eater"
@@ -557,7 +668,7 @@
 ;;             (values _ enemy))))
 ;;   
 ;;   #:discard graveyard)
-  
+
 ;; (define-card/encounter solar-flair-card%
 ;;   #:name "Solar flair"
 ;;   #:text "Roll. If you lose, place top 3 cards in the lost stack and take -2 \
@@ -570,7 +681,9 @@
 ;;         (feedback 3 (==* (send _ discard _ #:stack 'lost) _))
 ;;         (send damage-ship -2)))
 ;;   #:discard graveyard)
-          
+
+;TODO: contest action (think of a way to configure the rounds)
+
 ;; (define-card/encounter enemy-fleet-card%
 ;;   #:name "Enemy fleet"
 ;;   #:text "Win 2 of 3 rolls to escape. Otherwise, take -3 damage, and place \
@@ -588,9 +701,11 @@
 ;;   #:discard graveyard)
 
 (define all-cards
-  (list (new plasma-cruiser-card%)
-        (new marauder-card%)
-        (new star-strider-card%)))
+  (list
+    (new plasma-cruiser-card%)
+    (new marauder-card%)
+    (new star-strider-card%)
+    (new nebula-raider-card%)))
 
 
 (module+ examples
@@ -650,4 +765,5 @@
   (require (submod ".." encounter-card%-tests))
   (require (submod ".." plasma-cruiser-card%-tests))
   (require (submod ".." marauder-card%-tests))
-  (require (submod ".." star-strider-card%-tests)))
+  (require (submod ".." star-strider-card%-tests))
+  (require (submod ".." nebula-raider-card%-tests)))
