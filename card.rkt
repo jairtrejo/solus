@@ -86,16 +86,27 @@
     (super-new)
     (init-field defense attack life)
 
+    (define/public (special-rolls roll)
+      #f)
+
     (define/public (damage-in roll)
       (~> (roll)
+          (effect (~>> (send this special-rolls)
+                       (and real? positive?)
+                       (as special-damage-in)))
           (switch
+            [(gen special-damage-in) (gen special-damage-in)]
             [(>= defense) roll->enemy-damage]
             [(<= attack) 0]
             [else 1])))
     
     (define/public (damage-out roll)
       (~> (roll)
+          (effect (~>> (send this special-rolls)
+                       (and real? negative?)
+                       (as special-damage-out)))
           (switch
+            [(gen special-damage-out) (gen special-damage-out)]
             [(<= attack) roll->ship-damage]
             [(>= defense) 0]
             [else -1])))
@@ -201,10 +212,10 @@
     (super-new)
     (abstract describe discard make-enemy)
 
-    (define/public (warp board enemy)
-      (~> (board)
-          (send age-pilot 10)
-          (send discard this #:stack 'lost)))
+    ;TODO: Refactor so we don't require a method definition
+    (define/pubment (warp-effect board)
+      (inner (send board age-pilot 10)
+             warp-effect board))
 
     (define/pubment (defeat board)
       ((ui) '(player-defeated))
@@ -227,6 +238,11 @@
           (if (~> count (= 1))
               (send this discard _)
               _)))
+
+    (define/public (warp board enemy)
+      (~> (board)
+          (send this warp-effect _)
+          (send discard this #:stack 'lost)))
 
     (define/public (available-actions)
       (list 'battle 'warp))
@@ -346,7 +362,7 @@
 ;;   #:stats (#:defense 14 #:attack 5 #:life 3)
 ;;   #:text "Initiating warp drive causes you to age +30 years"
 ;;
-;;   (when warp
+;;   (when warp-effect
 ;;     (send age-pilot 30)
 ;;
 ;;   #:discard graveyard)
@@ -370,10 +386,8 @@
     (define/override (discard board)
       (send board discard this #:stack 'graveyard))
 
-    (define/override (warp board enemy)
-      (~> (board)
-          (send age-pilot 30)
-          (send discard this #:stack 'lost)))))
+    (define/augment (warp-effect board)
+      (send board age-pilot 30))))
 
 
 (module+ plasma-cruiser-card%-tests
@@ -398,7 +412,7 @@
 ;;   #:text "You can't initiate warp drive."
 ;;   #:stats (#:defense 17 #:attack 8 #:life 2)
 ;;   
-;;   #:disable-action warp
+;;   (disable-action warp)
 ;;
 ;;   #:discard graveyard)
   
@@ -442,7 +456,7 @@
 ;;   #:stats (#:defense 12 #:attack 7 #:life 2)
 ;;
 ;;   (when victory
-;;     (send age-pilot 20))
+;;     (send board age-pilot 20))
 ;;   
 ;;   #:discard graveyard)
 
@@ -489,6 +503,89 @@
           (send game-over?)
           check-false))))
 
+;; (define-card/encounter nebula-raider-card%
+;;   #:name "Nebula raider"
+;;   #:text "Roll 5 or less: take -2 damage"
+;;   #:stats (#:defense 12 #:attack 9 #:life 3)
+;;
+;;   (special-rolls
+;;     [(< roll 5) -2])
+;;
+;;   #:discard graveyard)
+
+;; (define-card/encounter warp-scourge-card%
+;;   #:name "Warp scourge"
+;;   #:text "You must roll two consecutive hits to deal -1 damage"
+;;   #:stats (#:defense 12 #:attack 6 #:life 2)
+;;
+;;   (special-rolls
+;;     [(and hit? (> consecutive-hits 0)) 1])
+;;
+;;   #:discard graveyard)
+
+;; (define-card/encounter infestation-card%
+;;   #:name "Infestation"
+;;   #:text "You may roll. Every loss is -2 damage. Or you may take -4 damage to rid of the infestation immediately."
+;;   #:stats (#:defense 6 #:life 2)
+;;
+;;   (special-rolls
+;;     [miss? -2])
+;;
+;;   (enable-action thwart)
+;;
+;;   (when thwart
+;;     (send board damage-ship -4))
+;;
+;;   #:discard lost)
+
+;; (define-card/encounter time-eater-card%
+;;   #:name "Time eater"
+;;   #:text "Every miss: place the top card of your deck in the lost stack and \
+;;           age +10 years. If this happens 3 times, place Time Eater back into \
+;;           the deck and shuffle"
+;;   #:stats (#:defense 10 #:life 3)
+;;
+;;   (special-rolls
+;;     [miss? 0])
+;;
+;;   (when miss
+;;     (~> (board)
+;;         (send draw-card)
+;;         (send _ discard _ #:stack 'lost)
+;;         (if (equal? total-misses 2)
+;;             (send shuffle-into-deck this)
+;;             (values _ enemy))))
+;;   
+;;   #:discard graveyard)
+  
+;; (define-card/encounter solar-flair-card%
+;;   #:name "Solar flair"
+;;   #:text "Roll. If you lose, place top 3 cards in the lost stack and take -2 \
+;;           damage to the ship"
+;;   #:stats (#:defense 7 #:life 1)
+;;   
+;;   (when miss
+;;     (~> (board)
+;;         (feedback 3 (send draw-card))
+;;         (feedback 3 (==* (send _ discard _ #:stack 'lost) _))
+;;         (send damage-ship -2)))
+;;   #:discard graveyard)
+          
+;; (define-card/encounter enemy-fleet-card%
+;;   #:name "Enemy fleet"
+;;   #:text "Win 2 of 3 rolls to escape. Otherwise, take -3 damage, and place \
+;;           enemy fleet in lost stack."
+;;   #:stats (#:defense 12 #:life 2)
+;;
+;;   (disable-action battle)
+;;   (enable-action contest)
+;;
+;;   (when defeat
+;;     (~> (board)
+;;         (send damage-ship -3)
+;;         (send discard this #:stack 'lost)))
+;;
+;;   #:discard graveyard)
 
 (define all-cards
   (list (new plasma-cruiser-card%)

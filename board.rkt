@@ -60,7 +60,7 @@
         ['lost (clone #:deck (send deck shuffle-in lost)
                       #:lost (list->stack '()))]
         [(? stack? s) (clone #:deck (send deck shuffle-in s))]
-        [_ this]))
+        [c (clone #:deck (send deck shuffle-in (list->stack (list c))))]))
 
     (define/public (age-pilot [years 10])
       (~> (years)
@@ -185,6 +185,13 @@
     "an arbitrary stack can be shuffled into the deck"
     (~> (empty-board)
         (send shuffle-into-deck #:stack (list->stack '(x)))
+        (~> (get-field deck _)
+            stack->list
+            (check-equal? '(x)))))
+  (test-case
+    "a single card can be shuffled into the deck"
+    (~> (empty-board)
+        (send shuffle-into-deck #:stack 'x)
         (~> (get-field deck _)
             stack->list
             (check-equal? '(x)))))
