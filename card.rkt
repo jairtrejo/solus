@@ -92,8 +92,10 @@
     (define/public (damage-in roll)
       (~> (roll)
           (effect (~>> (send this special-rolls)
-                       (gate (and real? positive?))
-                       (rectify #f)
+                       (switch
+                         [(and real? positive?) _]
+                         [(and real?) 0]
+                         [else #f])
                        (as special-damage-in)))
           (switch
             [(gen special-damage-in) (gen special-damage-in)]
@@ -104,8 +106,10 @@
     (define/public (damage-out roll)
       (~> (roll)
           (effect (~>> (send this special-rolls)
-                       (gate (and real? negative?))
-                       (rectify #f)
+                       (switch
+                         [(and real? negative?) _]
+                         [(and real?) 0]
+                         [else #f])
                        (as special-damage-out)))
           (switch
             [(gen special-damage-out) (gen special-damage-out)]
@@ -256,11 +260,6 @@
     (super-new)
     (abstract describe discard make-enemy)
 
-    ;TODO: Refactor so we don't require a method definition
-    (define/pubment (warp-effect board)
-      (inner (send board age-pilot 10)
-             warp-effect board))
-
     (define/pubment (defeat board)
       ((ui) '(player-defeated))
       (inner board defeat board))
@@ -283,10 +282,23 @@
               (send this discard _)
               _)))
 
+    ;TODO: Refactor so we don't require a method definition
+    (define/pubment (warp-effect board)
+      (inner (send board age-pilot 10)
+             warp-effect board))
+
     (define/public (warp board enemy)
       (~> (board)
           (send this warp-effect _)
           (send discard this #:stack 'lost)))
+
+    (define/pubment (thwart-effect board)
+      (inner board thwart-effect board))
+
+    (define/public (thwart board enemy)
+      (~>> (board)
+           (send this thwart-effect)
+           (send this discard)))
 
     (define/public (available-actions)
       (list 'battle 'warp))
@@ -360,6 +372,13 @@
           (send game-over?)
           check-true)))
   (test-case
+    "thwarting discards the enemy immediately"
+    (~> (test-card)
+        (send thwart test-board test-enemy)
+        (effect check-enemy-gone)
+        (send game-over?)
+        check-false))
+  (test-case
     "resolving lets player warp away at the beginning"
     (parameterize ([ui (test-ui `([(pick-action battle warp) warp]))])
       (~> (test-card)
@@ -397,6 +416,7 @@
           (send game-over?)
           check-true))))
 
+
 ;
 ; SPECIFIC CARDS
 ;
@@ -427,11 +447,11 @@
                   [attack 5]
                   [life 3]))
 
-    (define/override (discard board)
-      (send board discard this #:stack 'graveyard))
-
     (define/augment (warp-effect board)
-      (send board age-pilot 30))))
+      (send board age-pilot 30))
+
+    (define/override (discard board)
+      (send board discard this #:stack 'graveyard))))
 
 
 (module+ plasma-cruiser-card%-tests
@@ -557,16 +577,6 @@
 ;;
 ;;   #:discard graveyard)
 
-;; (define-card/encounter warp-scourge-card%
-;;   #:name "Warp scourge"
-;;   #:text "You must roll two consecutive hits to deal -1 damage"
-;;   #:stats (#:defense 12 #:attack 6 #:life 2)
-;;
-;;   (special-rolls
-;;     [(and hit? (> consecutive-hits 0)) 1])
-;;
-;;   #:discard graveyard)
-
 
 (define nebula-raider-card%
   (class* encounter-card% (card)
@@ -629,8 +639,6 @@
           check-false))))
 
 
-;TODO: Thwart action
-
 ;; (define-card/encounter infestation-card%
 ;;   #:name "Infestation"
 ;;   #:text "You may roll. Every loss is -2 damage. Or you may take -4 damage to rid of the infestation immediately."
@@ -646,8 +654,88 @@
 ;;
 ;;   #:discard lost)
 
-;TODO: keeping track of total-misses
-;TODO: miss and hit hooks (if they remove the enemy end the encounter)
+(define infestation-card%
+  (class encounter-card%
+    (super-new)
+    
+    (define/override (describe)
+      ((ui) `(describe-card
+               #:name "Infestation"
+               #:text "You may roll. Every loss is -2 damage. Or you may take -4 damage to rid of the infestation immediately."
+               #:defense 6 #:life 2)))
+
+    (define/override (make-enemy)
+      (new
+        (class enemy%
+          (super-new)
+          (define/override (special-rolls roll)
+            (cond
+              [(< roll 6) -2]
+              [else #f])))
+        [defense 6] [attack 6] [life 2]))
+
+    (define/augment (thwart-effect board)
+      (send board damage-ship -4))
+
+    (define/override (available-actions)
+      (~>> ((super available-actions))
+           (cons 'thwart)))
+
+    (define/override (discard board)
+      (send board discard this #:stack 'lost))))
+ 
+(module+ infestation-card%-tests
+  (require (submod ".." examples))
+  (require (submod "ui.rkt" examples))
+  (test-case
+    "missing causes -2 damage"
+    (define test-board
+      (new (class test-board%
+             (super-new)
+             (define/override (damage-ship damage)
+               (check-equal? damage -2)
+               (super damage-ship damage)))))
+    (parameterize ([ui (test-ui '([(pick-action thwart battle warp) battle]
+                                  [(roll d20) 5]
+                                  (enemy-evaded)
+                                  [(pick-action thwart battle warp) warp]))])
+      (~> ((new infestation-card%))
+          (send resolve test-board)
+          (send game-over?)
+          check-false)))
+  (test-case
+    "thwarting causes -4 damage and removes the enemy"
+    (define test-board
+      (new (class test-board%
+             (super-new)
+             (define/override (damage-ship damage)
+               (check-equal? damage -4)
+               (super damage-ship damage)))))
+    (parameterize ([ui (test-ui '([(pick-action thwart battle warp) thwart]))])
+      (~> ((new infestation-card%))
+          (send resolve test-board)
+          (send game-over?)
+          check-true))))
+
+
+;TODO: miss and hit hooks (if they remove the enemy, end the encounter))
+
+;; (define-card/encounter solar-flair-card%
+;;   #:name "Solar flair"
+;;   #:text "Roll. If you lose, place top 3 cards in the lost stack and take -2 \
+;;           damage to the ship"
+;;   #:stats (#:defense 7 #:life 1)
+;;
+;;   (special-rolls
+;;     [miss? -2])
+;;   
+;;   (when miss
+;;     (~> (board)
+;;         (feedback 3 (send draw-card))
+;;         (feedback 3 (==* (send _ discard _ #:stack 'lost) _))
+;;   #:discard graveyard)
+
+;TODO: Keep track of total-misses
 
 ;; (define-card/encounter time-eater-card%
 ;;   #:name "Time eater"
@@ -669,20 +757,7 @@
 ;;   
 ;;   #:discard graveyard)
 
-;; (define-card/encounter solar-flair-card%
-;;   #:name "Solar flair"
-;;   #:text "Roll. If you lose, place top 3 cards in the lost stack and take -2 \
-;;           damage to the ship"
-;;   #:stats (#:defense 7 #:life 1)
-;;   
-;;   (when miss
-;;     (~> (board)
-;;         (feedback 3 (send draw-card))
-;;         (feedback 3 (==* (send _ discard _ #:stack 'lost) _))
-;;         (send damage-ship -2)))
-;;   #:discard graveyard)
-
-;TODO: contest action (think of a way to configure the rounds)
+;TODO: Contest action (think of a way to configure the rounds)
 
 ;; (define-card/encounter enemy-fleet-card%
 ;;   #:name "Enemy fleet"
@@ -700,12 +775,25 @@
 ;;
 ;;   #:discard graveyard)
 
+;TODO: Keep track of consecutive hits
+
+;; (define-card/encounter warp-scourge-card%
+;;   #:name "Warp scourge"
+;;   #:text "You must roll two consecutive hits to deal -1 damage"
+;;   #:stats (#:defense 12 #:attack 6 #:life 2)
+;;
+;;   (special-rolls
+;;     [(and hit? (> consecutive-hits 0)) 1])
+;;
+;;   #:discard graveyard)
+
 (define all-cards
   (list
     (new plasma-cruiser-card%)
     (new marauder-card%)
     (new star-strider-card%)
-    (new nebula-raider-card%)))
+    (new nebula-raider-card%)
+    (new infestation-card%)))
 
 
 (module+ examples
@@ -766,4 +854,5 @@
   (require (submod ".." plasma-cruiser-card%-tests))
   (require (submod ".." marauder-card%-tests))
   (require (submod ".." star-strider-card%-tests))
-  (require (submod ".." nebula-raider-card%-tests)))
+  (require (submod ".." nebula-raider-card%-tests))
+  (require (submod ".." infestation-card%-tests)))
