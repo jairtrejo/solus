@@ -48,12 +48,14 @@
           (==* (clone #:deck _) _)))
 
     (define/public (discard c #:stack [destination #f])
+      ;TODO: Report discards to the UI
       (match destination
         ['graveyard (clone #:graveyard (send graveyard put c))]
         ['lost (clone #:lost (send lost put c))]
         [_ this]))
 
     (define/public (shuffle-into-deck #:stack source)
+      ;TODO: Report shuffles to the UI
       (match source
         ['graveyard (clone #:deck (send deck shuffle-in graveyard)
                            #:graveyard (list->stack '()))]

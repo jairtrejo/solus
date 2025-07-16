@@ -87,11 +87,17 @@
     (super-new)
     (init-field defense attack life)
 
+    (init-field [misses 0]
+                [hits 0]
+                [consecutive-hits 0]
+                [consecutive-misses 0])
+
     (define/public (special-rolls roll)
       #f)
 
     (define/public (damage-in roll)
       (~> (roll)
+          ;TODO: Make this a special-damage-in method
           (effect (~>> (send this special-rolls)
                        (switch
                          [(and real? positive?) _]
@@ -120,21 +126,34 @@
 
     (define/public (damage amount)
       (~> (amount)
+          (effect (~> positive? (as hit?)))
           (- life _)
-          (effect (if (gen (zero? amount))
-                      (~> ground ui-enemy-evaded)
-                      (ui-enemy-damaged amount _)))
-          (clone #:life _)))
+          (effect (if (gen hit?)
+                      (ui-enemy-damaged amount _)
+                      (~> ground ui-enemy-evaded)))
+          (clone #:life _
+                 #:hits (if hit? (add1 hits) hits)
+                 #:misses (if hit? misses (add1 misses))
+                 #:consecutive-hits (if hit? (add1 consecutive-hits) 0)
+                 #:consecutive-misses (if hit? 0 (add1 consecutive-misses)))))
 
     (define/public (defeated?)
       (not (positive? life)))
 
     (define (clone #:defense [defense defense]
                    #:attack [attack attack]
-                   #:life [life life])
-      (new enemy% [defense defense]
-                  [attack attack]
-                  [life life]))))
+                   #:life [life life]
+                   #:hits [hits hits]
+                   #:misses [misses misses]
+                   #:consecutive-hits [consecutive-hits consecutive-hits]
+                   #:consecutive-misses [consecutive-misses consecutive-misses])
+      (new this% [defense defense]
+                 [attack attack]
+                 [life life]
+                 [hits hits]
+                 [misses misses]
+                 [consecutive-hits consecutive-hits]
+                 [consecutive-misses consecutive-misses]))))
 
 
 (module+ enemy%-tests
@@ -245,7 +264,52 @@
         [defense 14] [attack 5] [life 3]))
     (~> (test-enemy)
       (send damage-in 15)
-      (check-equal? 2))))
+      (check-equal? 2)))
+  (test-case
+    "counts hits and misses"
+    (parameterize ([ui (test-ui '((enemy-damaged #:damage 1 #:life 2)
+                                  (enemy-evaded)
+                                  (enemy-damaged #:damage 2 #:life 0)))])
+      (~> (test-enemy)
+        (send damage 1)
+        (send damage 0)
+        (send damage 2)
+        (-< (~> (get-field hits _)
+                (check-equal? 2))
+            (~> (get-field misses _)
+                (check-equal? 1))))))
+  (test-case
+    "counts consecutive hits"
+    (parameterize ([ui (test-ui '((enemy-damaged #:damage 1 #:life 2)
+                                  (enemy-damaged #:damage 2 #:life 0)
+                                  (enemy-evaded)
+                                  (enemy-damaged #:damage 2 #:life -2)))])
+      (~> (test-enemy)
+        (send damage 1)
+        (effect (~> (get-field consecutive-hits _) (check-equal? 1)))
+        (send damage 2)
+        (effect (~> (get-field consecutive-hits _) (check-equal? 2)))
+        (send damage 0)
+        (effect (~> (get-field consecutive-hits _) (check-equal? 0)))
+        (send damage 2)
+        (get-field consecutive-hits _)
+        (check-equal? 1))))
+  (test-case
+    "counts consecutive misses"
+    (parameterize ([ui (test-ui '((enemy-evaded)
+                                  (enemy-evaded)
+                                  (enemy-damaged #:damage 1 #:life 2)
+                                  (enemy-evaded)))])
+      (~> (test-enemy)
+        (send damage 0)
+        (effect (~> (get-field consecutive-misses _) (check-equal? 1)))
+        (send damage 0)
+        (effect (~> (get-field consecutive-misses _) (check-equal? 2)))
+        (send damage 1)
+        (effect (~> (get-field consecutive-misses _) (check-equal? 0)))
+        (send damage 0)
+        (get-field consecutive-misses _)
+        (check-equal? 1)))))
 
 
 (define (ui-user-roll)
@@ -269,6 +333,7 @@
       ((ui) '(enemy-defeated))
       (inner board victory board))
 
+    ;TODO: Hit and Miss should be able to remove the enemy
     (define/public (hit board enemy)
       (values board enemy))
 
@@ -283,7 +348,8 @@
                    (effect (~> positive? (as hit?)))
                    (send enemy damage)))
           (if (gen hit?) (send this hit _ _) (send this miss _ _))
-          (if (or% (send game-over?) (send defeated?))
+          (if (or% (send game-over?)
+                   (if live? (send defeated?) (rectify #t)))
               (~>> 1>
                    (if (send _ game-over?)
                        (send this defeat _)
@@ -811,11 +877,98 @@
 ;;     (~> (board)
 ;;         (send draw-card)
 ;;         (send _ discard _ #:stack 'lost)
+;;         (send age-pilot 10)
 ;;         (if (equal? total-misses 2)
-;;             (send shuffle-into-deck this)
+;;             (send shuffle-into-deck #:stack this)
 ;;             (values _ enemy))))
 ;;   
 ;;   #:discard graveyard)
+
+(define time-eater-card%
+  (class encounter-card%
+    (super-new)
+    
+    (define/override (describe)
+      ((ui) `(describe-card
+               #:name "Time eater"
+               #:text "Every miss: place the top card of your deck in the lost stack and age +10 years. If this happens 3 times, place Time Eater back into the deck and shuffle."
+               #:defense 10 #:life 3)))
+
+    (define/override (make-enemy)
+      (new
+        (class enemy%
+          (super-new)
+          (define/override (special-rolls roll)
+            (cond
+              [(< roll 10) 0]
+              [else #f])))
+        [defense 10] [attack 9] [life 3]))
+
+    (define/override (miss board enemy)
+      (~> (board)
+          (send draw-card)
+          (send _ discard _ #:stack 'lost)
+          (send age-pilot 10)
+          (if (~> (gen (get-field misses enemy))
+                  (equal? 3))
+              (~> (send shuffle-into-deck #:stack this)
+                  (values (send enemy damage 3)))
+              (values enemy))))
+
+    (define/override (discard board)
+      (send board discard this #:stack 'graveyard))))
+
+(module+ time-eater-card%-tests
+  (require (submod ".." examples))
+  (require (submod "ui.rkt" examples))
+  (define test-board (new test-board%))
+  (test-case
+    "missing sends the top deck card to the lost stack and ages +10 years"
+    (define test-board
+      (new (class test-board%
+             (super-new)
+             (define/override (age-pilot years)
+               (check-equal? years 10)
+               this))))
+    (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
+                                  [(roll d20) 1]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) warp]))])
+      (~> ((new time-eater-card%))
+          (send resolve test-board)
+          (-< (~> (send game-over?)
+                  check-false)
+              (~> (get-field stacks _)
+                  (hash-ref 'lost)
+                  length
+                  (check-equal? 2))
+              (~> (get-field aged _)
+                  check-true)))))
+  (test-case
+    "missing three times shuffles time-eater back into the deck"
+    (define test-board
+      (new (class test-board%
+             (super-new)
+             (define/override (age-pilot years)
+               (check-equal? years 10)
+               this))))
+    (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
+                                  [(roll d20) 1]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) battle]
+                                  [(roll d20) 1]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) battle]
+                                  [(roll d20) 1]
+                                  (enemy-evaded)
+                                  (enemy-damaged #:damage 3 #:life 0)
+                                  (enemy-defeated)))])
+      (~> ((new time-eater-card%))
+          (send resolve test-board)
+          (~> (get-field stacks _)
+              (hash-ref 'deck)
+              length
+              (check-equal? 1))))))
 
 ;TODO: Contest action (think of a way to configure the rounds)
 
@@ -849,6 +1002,7 @@
 
 (define all-cards
   (list
+    (new time-eater-card%)
     (new plasma-cruiser-card%)
     (new marauder-card%)
     (new star-strider-card%)
@@ -902,6 +1056,8 @@
        (define/public (draw-card) (values this (new dummy-card% [name 'test])))
        (define/public (discard c #:stack [destination #f])
          (clone #:stacks (hash-update stacks destination (curry cons c) list)))
+       (define/public (shuffle-into-deck #:stack c)
+         (clone #:stacks (hash-update stacks 'deck (curry cons c) list)))
        (define (clone #:aged [aged aged]
                       #:damaged [damaged damaged]
                       #:dead [dead dead]
@@ -922,4 +1078,5 @@
   (require (submod ".." star-strider-card%-tests))
   (require (submod ".." nebula-raider-card%-tests))
   (require (submod ".." infestation-card%-tests))
-  (require (submod ".." solar-flair-card%-tests)))
+  (require (submod ".." solar-flair-card%-tests))
+  (require (submod ".." time-eater-card%-tests)))
