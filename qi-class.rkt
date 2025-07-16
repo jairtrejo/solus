@@ -6,9 +6,9 @@
 
 (provide
   (for-space qi
-    send make-object get-field new))
+    send make-object get-field inner new))
 
-(define-qi-foreign-syntaxes send make-object get-field)
+(define-qi-foreign-syntaxes send make-object get-field inner)
 
 (define-qi-syntax-parser new
   #:literals (_)

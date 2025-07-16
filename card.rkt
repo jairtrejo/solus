@@ -7,6 +7,7 @@
 (require rackunit)
 (require "qi-class.rkt")
 (require "ui.rkt")
+(require "stack.rkt")
 
 
 (define card
@@ -268,18 +269,26 @@
       ((ui) '(enemy-defeated))
       (inner board victory board))
 
+    (define/public (hit board enemy)
+      (values board enemy))
+
+    (define/public (miss board enemy)
+      (values board enemy))
+
     (define/public (battle board enemy)
       (~> ((ui-user-roll))
           (-< (~>> (send enemy damage-out)
                    (send board damage-ship))
               (~>> (send enemy damage-in)
+                   (effect (~> positive? (as hit?)))
                    (send enemy damage)))
-          (switch
-            [(~> 1> (send game-over?)) (~>> 1> (send this defeat))]
-            [(~> 2> (send defeated?)) (~>> 1> (send this victory))]
-            [else _])
-          (if (~> count (= 1))
-              (send this discard _)
+          (if (gen hit?) (send this hit _ _) (send this miss _ _))
+          (if (or% (send game-over?) (send defeated?))
+              (~>> 1>
+                   (if (send _ game-over?)
+                       (send this defeat _)
+                       (send this victory _))
+                   (send this discard))
               _)))
 
     ;TODO: Refactor so we don't require a method definition
@@ -718,8 +727,6 @@
           check-true))))
 
 
-;TODO: miss and hit hooks (if they remove the enemy, end the encounter))
-
 ;; (define-card/encounter solar-flair-card%
 ;;   #:name "Solar flair"
 ;;   #:text "Roll. If you lose, place top 3 cards in the lost stack and take -2 \
@@ -735,8 +742,61 @@
 ;;         (feedback 3 (==* (send _ discard _ #:stack 'lost) _))
 ;;   #:discard graveyard)
 
-;TODO: Keep track of total-misses
+(define solar-flair-card%
+  (class encounter-card%
+    (super-new)
+    
+    (define/override (describe)
+      ((ui) `(describe-card
+               #:name "Solar flair"
+               #:text "Roll. If you lose, place top 3 cards in the losts stack and take -2 damage to the ship"
+               #:defense 7 #:life -1)))
 
+    (define/override (make-enemy)
+      (new
+        (class enemy%
+          (super-new)
+          (define/override (special-rolls roll)
+            (cond
+              [(< roll 7) -2]
+              [else #f])))
+        [defense 7] [attack 7] [life -1]))
+
+    (define/override (miss board enemy)
+      (~> (board)
+          (feedback 3 (==* (send draw-card) _))
+          (feedback (while (~> count (> 1)))
+                    (group 2 (send _ discard _ #:stack 'lost) _))
+          (values enemy)))
+
+    (define/override (discard board)
+      (send board discard this #:stack 'graveyard))))
+
+(module+ solar-flair-card%-tests
+  (require (submod ".." examples))
+  (require (submod "ui.rkt" examples))
+  (test-case
+    "missing causes -2 damage and discards top three cards"
+    (define test-board
+      (new (class test-board%
+             (super-new)
+             (define/override (damage-ship damage)
+               (check-equal? damage -2)
+               (super damage-ship damage)))))
+    (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
+                                  [(roll d20) 5]
+                                  (enemy-evaded)
+                                  (enemy-defeated)))])
+      (~> ((new solar-flair-card%))
+          (send resolve test-board)
+          (-< (~> (send game-over?)
+                  check-false)
+              (~> (get-field stacks _)
+                  (hash-ref 'lost)
+                  length
+                  (check-equal? 3)))))))
+
+;TODO: Keep track of total-misses
 ;; (define-card/encounter time-eater-card%
 ;;   #:name "Time eater"
 ;;   #:text "Every miss: place the top card of your deck in the lost stack and \
@@ -793,7 +853,8 @@
     (new marauder-card%)
     (new star-strider-card%)
     (new nebula-raider-card%)
-    (new infestation-card%)))
+    (new infestation-card%)
+    (new solar-flair-card%)))
 
 
 (module+ examples
@@ -823,7 +884,8 @@
        (init-field [aged #f]
                    [damaged #f]
                    [dead #f]
-                   [destroyed #f])
+                   [destroyed #f]
+                   [stacks (hash)])
        (define/public (age-pilot years)
          (cond
            [(> years 20) (clone #:aged #t #:dead #t)]
@@ -837,15 +899,19 @@
        (define/public (pilot-aged?) aged)
        (define/public (ship-damaged?) damaged)
        (define/public (game-over?) (or dead destroyed))
-       (define/public (discard c #:stack [destination #f]) this)
+       (define/public (draw-card) (values this (new dummy-card% [name 'test])))
+       (define/public (discard c #:stack [destination #f])
+         (clone #:stacks (hash-update stacks destination (curry cons c) list)))
        (define (clone #:aged [aged aged]
                       #:damaged [damaged damaged]
                       #:dead [dead dead]
-                      #:destroyed [destroyed destroyed])
+                      #:destroyed [destroyed destroyed]
+                      #:stacks [stacks stacks])
          (new test-board% [aged aged]
                           [damaged damaged]
                           [dead dead]
-                          [destroyed destroyed])))))
+                          [destroyed destroyed]
+                          [stacks stacks])))))
 
 (module+ test
   (require (submod ".." card?-tests))
@@ -855,4 +921,5 @@
   (require (submod ".." marauder-card%-tests))
   (require (submod ".." star-strider-card%-tests))
   (require (submod ".." nebula-raider-card%-tests))
-  (require (submod ".." infestation-card%-tests)))
+  (require (submod ".." infestation-card%-tests))
+  (require (submod ".." solar-flair-card%-tests)))
