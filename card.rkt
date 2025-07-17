@@ -124,6 +124,13 @@
             [(>= defense) 0]
             [else -1])))
 
+    (define/public (update-stats roll)
+      (define hit? (>= roll defense))
+      (clone #:hits (if hit? (add1 hits) hits)
+             #:misses (if hit? misses (add1 misses))
+             #:consecutive-hits (if hit? (add1 consecutive-hits) 0)
+             #:consecutive-misses (if hit? 0 (add1 consecutive-misses))))
+
     (define/public (damage amount)
       (~> (amount)
           (effect (~> positive? (as hit?)))
@@ -131,11 +138,7 @@
           (effect (if (gen hit?)
                       (ui-enemy-damaged amount _)
                       (~> ground ui-enemy-evaded)))
-          (clone #:life _
-                 #:hits (if hit? (add1 hits) hits)
-                 #:misses (if hit? misses (add1 misses))
-                 #:consecutive-hits (if hit? (add1 consecutive-hits) 0)
-                 #:consecutive-misses (if hit? 0 (add1 consecutive-misses)))))
+          (clone #:life _)))
 
     (define/public (defeated?)
       (not (positive? life)))
@@ -267,49 +270,38 @@
       (check-equal? 2)))
   (test-case
     "counts hits and misses"
-    (parameterize ([ui (test-ui '((enemy-damaged #:damage 1 #:life 2)
-                                  (enemy-evaded)
-                                  (enemy-damaged #:damage 2 #:life 0)))])
-      (~> (test-enemy)
-        (send damage 1)
-        (send damage 0)
-        (send damage 2)
-        (-< (~> (get-field hits _)
-                (check-equal? 2))
-            (~> (get-field misses _)
-                (check-equal? 1))))))
+    (~> (test-enemy)
+      (send update-stats 20)
+      (send update-stats 1)
+      (send update-stats 20)
+      (-< (~> (get-field hits _)
+              (check-equal? 2))
+          (~> (get-field misses _)
+              (check-equal? 1)))))
   (test-case
     "counts consecutive hits"
-    (parameterize ([ui (test-ui '((enemy-damaged #:damage 1 #:life 2)
-                                  (enemy-damaged #:damage 2 #:life 0)
-                                  (enemy-evaded)
-                                  (enemy-damaged #:damage 2 #:life -2)))])
-      (~> (test-enemy)
-        (send damage 1)
-        (effect (~> (get-field consecutive-hits _) (check-equal? 1)))
-        (send damage 2)
-        (effect (~> (get-field consecutive-hits _) (check-equal? 2)))
-        (send damage 0)
-        (effect (~> (get-field consecutive-hits _) (check-equal? 0)))
-        (send damage 2)
-        (get-field consecutive-hits _)
-        (check-equal? 1))))
+    (~> (test-enemy)
+      (send update-stats 20)
+      (effect (~> (get-field consecutive-hits _) (check-equal? 1)))
+      (send update-stats 20)
+      (effect (~> (get-field consecutive-hits _) (check-equal? 2)))
+      (send update-stats 1)
+      (effect (~> (get-field consecutive-hits _) (check-equal? 0)))
+      (send update-stats 20)
+      (get-field consecutive-hits _)
+      (check-equal? 1)))
   (test-case
     "counts consecutive misses"
-    (parameterize ([ui (test-ui '((enemy-evaded)
-                                  (enemy-evaded)
-                                  (enemy-damaged #:damage 1 #:life 2)
-                                  (enemy-evaded)))])
-      (~> (test-enemy)
-        (send damage 0)
-        (effect (~> (get-field consecutive-misses _) (check-equal? 1)))
-        (send damage 0)
-        (effect (~> (get-field consecutive-misses _) (check-equal? 2)))
-        (send damage 1)
-        (effect (~> (get-field consecutive-misses _) (check-equal? 0)))
-        (send damage 0)
-        (get-field consecutive-misses _)
-        (check-equal? 1)))))
+    (~> (test-enemy)
+      (send update-stats 1)
+      (effect (~> (get-field consecutive-misses _) (check-equal? 1)))
+      (send update-stats 1)
+      (effect (~> (get-field consecutive-misses _) (check-equal? 2)))
+      (send update-stats 20)
+      (effect (~> (get-field consecutive-misses _) (check-equal? 0)))
+      (send update-stats 1)
+      (get-field consecutive-misses _)
+      (check-equal? 1))))
 
 
 (define (ui-user-roll)
@@ -344,9 +336,11 @@
       (~> ((ui-user-roll))
           (-< (~>> (send enemy damage-out)
                    (send board damage-ship))
-              (~>> (send enemy damage-in)
-                   (effect (~> positive? (as hit?)))
-                   (send enemy damage)))
+              (~>> (-< (send enemy update-stats _) _)
+                   (-< 1> (send _ damage-in _))
+                   (effect (~> 2> positive? (as hit?)))
+                   (send _ damage _)))
+          ;TODO: Review if 0 damage hits make sense
           (if (gen hit?) (send this hit _ _) (send this miss _ _))
           (if (or% (send game-over?)
                    (if live? (send defeated?) (rectify #t)))
@@ -915,7 +909,7 @@
                   (values (send enemy damage 3)))
               (values enemy))))
 
-    (define/override (discard board)
+    (define/override (discard board)enemy
       (send board discard this #:stack 'graveyard))))
 
 (module+ time-eater-card%-tests
@@ -970,6 +964,90 @@
               length
               (check-equal? 1))))))
 
+;; (define-card/encounter warp-scourge-card%
+;;   #:name "Warp scourge"
+;;   #:text "You must roll two consecutive hits to deal -1 damage"
+;;   #:stats (#:defense 12 #:attack 6 #:life 2)
+;;
+;;   (special-rolls
+;;     [(and hit? (> consecutive-hits 0)) 1])
+;;
+;;   #:discard graveyard)
+
+(define warp-scourge-card%
+  (class encounter-card%
+    (super-new)
+    
+    (define/override (describe)
+      ((ui) `(describe-card
+               #:name "Warp scourge"
+               #:text "You must roll two consecutive hits to deal -1 damage"
+               #:defense 12 #:attack 6 #:life 2)))
+
+    (define/override (make-enemy)
+      (new
+        (class enemy%
+          (super-new)
+          (inherit-field consecutive-hits)
+          (define/override (special-rolls roll)
+            (cond
+              [(and (>= roll 12)
+                    (>= consecutive-hits 2)) 1]
+              [(>= roll 12) 0]
+              [(> roll 6) -1]
+              [else #f])))
+        [defense 12] [attack 6] [life 2]))
+
+    (define/override (discard board)
+      (send board discard this #:stack 'graveyard))))
+
+(module+ warp-scourge-card%-tests
+  (require (submod ".." examples))
+  (require (submod "ui.rkt" examples))
+  (define test-board (new test-board%))
+  ;; (test-case
+  ;;   "hitting only once does no damage"
+  ;;   (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
+  ;;                                 [(roll d20) 20]
+  ;;                                 (enemy-evaded)
+  ;;                                 [(pick-action battle warp) warp]))])
+  ;;     (~> ((new warp-scourge-card%))
+  ;;         (send resolve test-board)
+  ;;         (-< (~> (send game-over?)
+  ;;                 check-false)))))
+  (test-case
+    "hitting twice does damage"
+    (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
+                                  [(roll d20) 20]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) battle]
+                                  [(roll d20) 20]
+                                  (enemy-damaged #:damage 1 #:life 1)
+                                  [(pick-action battle warp) warp]))])
+      (~> ((new warp-scourge-card%))
+          (send resolve test-board)
+          (-< (~> (send game-over?)
+                  check-false))))))
+  ;; (test-case
+  ;;   "alternate hits and misses do no damage"
+  ;;   (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
+  ;;                                 [(roll d20) 20]
+  ;;                                 (enemy-evaded)
+  ;;                                 [(pick-action battle warp) battle]
+  ;;                                 [(roll d20) 11]
+  ;;                                 (enemy-evaded)
+  ;;                                 [(pick-action battle warp) battle]
+  ;;                                 [(roll d20) 20]
+  ;;                                 (enemy-evaded)
+  ;;                                 [(pick-action battle warp) battle]
+  ;;                                 [(roll d20) 11]
+  ;;                                 (enemy-evaded)
+  ;;                                 [(pick-action battle warp) warp]))])
+  ;;     (~> ((new warp-scourge-card%))
+  ;;         (send resolve test-board)
+  ;;         (-< (~> (send game-over?)
+  ;;                 check-false))))))
+
 ;TODO: Contest action (think of a way to configure the rounds)
 
 ;; (define-card/encounter enemy-fleet-card%
@@ -988,27 +1066,16 @@
 ;;
 ;;   #:discard graveyard)
 
-;TODO: Keep track of consecutive hits
-
-;; (define-card/encounter warp-scourge-card%
-;;   #:name "Warp scourge"
-;;   #:text "You must roll two consecutive hits to deal -1 damage"
-;;   #:stats (#:defense 12 #:attack 6 #:life 2)
-;;
-;;   (special-rolls
-;;     [(and hit? (> consecutive-hits 0)) 1])
-;;
-;;   #:discard graveyard)
-
 (define all-cards
   (list
-    (new time-eater-card%)
     (new plasma-cruiser-card%)
     (new marauder-card%)
     (new star-strider-card%)
     (new nebula-raider-card%)
     (new infestation-card%)
-    (new solar-flair-card%)))
+    (new solar-flair-card%)
+    (new time-eater-card%)
+    (new warp-scourge-card%)))
 
 
 (module+ examples
@@ -1079,4 +1146,5 @@
   (require (submod ".." nebula-raider-card%-tests))
   (require (submod ".." infestation-card%-tests))
   (require (submod ".." solar-flair-card%-tests))
-  (require (submod ".." time-eater-card%-tests)))
+  (require (submod ".." time-eater-card%-tests))
+  (require (submod ".." warp-scourge-card%-tests)))
