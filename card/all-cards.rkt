@@ -5,486 +5,34 @@
 
 (require qi)
 (require rackunit)
-(require "qi-class.rkt")
-(require "ui.rkt")
-(require "stack.rkt")
-
-
-(define card
-  (interface ()
-             describe
-             resolve))
-
-
-(define-flow card? (is-a? card))
-
+(require "../qi-class.rkt")
+(require "../ui.rkt")
+(require "../stack.rkt")
+(require "card.rkt")
+(require "enemy.rkt")
 
 (module+ examples
-  (provide dummy-card%)
-
-  (define dummy-card%
-    (class* object% (card)
-      (super-new)
-
-      (init-field name)
-
-      (define/public (describe)
-        ((ui) `(describe-card ,name)))
-
-      (define/public (resolve the-board)
-        ((ui) `(resolving-card ,name))
-        the-board))))
-
-
-(module+ card?-tests
-  (require (submod ".." examples))
-  (test-case
-    "Returns true for a card"
-    (~> ((new dummy-card% [name 'a]))
-        card?
-        check-true))
-  (test-case
-    "Returns false for a non-card"
-    (~> (0)
-        card?
-        check-false)))
-
-
-(define-flow roll->ship-damage
-  (switch [(= 1) -3]
-          [(= 2) -2]
-          [(< 12) -1]
-          [else 0]))
-
-
-(define-flow roll->enemy-damage
-  (switch [(= 20) 4]
-          [(= 19) 3]
-          [(= 18) 3]
-          [(= 17) 2]
-          [(= 16) 2]
-          [(= 15) 2]
-          [(> 5) 1]
-          [else 0]))
-
-(define enemy
-  (interface () damage-in
-                damage-out
-                damage
-                defeated?))
-
-
-(define (ui-enemy-damaged damage remaining-life)
-  ((ui) `(enemy-damaged #:damage ,damage #:life ,remaining-life)))
-
-
-(define (ui-enemy-evaded)
-  ((ui) '(enemy-evaded)))
-
-
-(define enemy%
-  (class object%
-    (super-new)
-    (init-field defense attack life)
-
-    (init-field [misses 0]
-                [hits 0]
-                [consecutive-hits 0]
-                [consecutive-misses 0])
-
-    (define/public (special-rolls roll)
-      #f)
-
-    (define/public (damage-in roll)
-      (~> (roll)
-          ;TODO: Make this a special-damage-in method
-          (effect (~>> (send this special-rolls)
-                       (switch
-                         [(and real? positive?) _]
-                         [(and real?) 0]
-                         [else #f])
-                       (as special-damage-in)))
-          (switch
-            [(gen special-damage-in) (gen special-damage-in)]
-            [(>= defense) roll->enemy-damage]
-            [(<= attack) 0]
-            [else 1])))
-    
-    (define/public (damage-out roll)
-      (~> (roll)
-          (effect (~>> (send this special-rolls)
-                       (switch
-                         [(and real? negative?) _]
-                         [(and real?) 0]
-                         [else #f])
-                       (as special-damage-out)))
-          (switch
-            [(gen special-damage-out) (gen special-damage-out)]
-            [(<= attack) roll->ship-damage]
-            [(>= defense) 0]
-            [else -1])))
-
-    (define/public (update-stats roll)
-      (define hit? (>= roll defense))
-      (clone #:hits (if hit? (add1 hits) hits)
-             #:misses (if hit? misses (add1 misses))
-             #:consecutive-hits (if hit? (add1 consecutive-hits) 0)
-             #:consecutive-misses (if hit? 0 (add1 consecutive-misses))))
-
-    (define/public (damage amount)
-      (~> (amount)
-          (effect (~> positive? (as hit?)))
-          (- life _)
-          (effect (if (gen hit?)
-                      (ui-enemy-damaged amount _)
-                      (~> ground ui-enemy-evaded)))
-          (clone #:life _)))
-
-    (define/public (defeated?)
-      (not (positive? life)))
-
-    (define (clone #:defense [defense defense]
-                   #:attack [attack attack]
-                   #:life [life life]
-                   #:hits [hits hits]
-                   #:misses [misses misses]
-                   #:consecutive-hits [consecutive-hits consecutive-hits]
-                   #:consecutive-misses [consecutive-misses consecutive-misses])
-      (new this% [defense defense]
-                 [attack attack]
-                 [life life]
-                 [hits hits]
-                 [misses misses]
-                 [consecutive-hits consecutive-hits]
-                 [consecutive-misses consecutive-misses]))))
-
-
-(module+ enemy%-tests
-  (require (submod "ui.rkt" examples))
-  (define test-enemy (new enemy% [defense 14] [attack 5] [life 3]))
-  (test-case
-    "rolls above defense cause damage"
-    (~> (test-enemy)
-        (send damage-in 20)
-        (check-equal? 4)))
-  (test-case
-    "rolls equal to defense cause damage"
-    (~> (test-enemy)
-        (send damage-in 14)
-        (check-equal? 1)))
-  (test-case
-    "rolls below defense but above attack cause 1 damage"
-    (~> (test-enemy)
-        (send damage-in 10)
-        (check-equal? 1)))
-  (test-case
-    "rolls equal to attack cause no damage"
-    (~> (test-enemy)
-        (send damage-in 5)
-        (check-equal? 0)))
-  (test-case
-    "rolls bellow attack cause no damage"
-    (~> (test-enemy)
-        (send damage-in 1)
-        (check-equal? 0)))
-  (test-case
-    "being damaged decreases life"
-    (parameterize ([ui (test-ui '((enemy-damaged #:damage 2 #:life 1)))])
-      (~> (test-enemy)
-        (send damage 2)
-        (get-field life _)
-        (check-equal? 1))))
-  (test-case
-    "it is defeated after being damaged enough"
-    (parameterize ([ui (test-ui '((enemy-damaged #:damage 4 #:life -1)))])
-      (~> (test-enemy)
-        (send damage 4)
-        (send defeated?)
-        check-true)))
-  (test-case
-    "damages ship when roll is below attack"
-    (~> (test-enemy)
-      (send damage-out 1)
-      (check-equal? -3)))
-  (test-case
-    "damages ship when roll is equal to attack"
-    (~> (test-enemy)
-      (send damage-out 5)
-      (check-equal? -1)))
-  (test-case
-    "only damages 1 when roll is above attack but below defense"
-    (~> (test-enemy)
-      (send damage-out 6)
-      (check-equal? -1)))
-  (test-case
-    "does not damage ship when roll is equal to defense"
-    (~> (test-enemy)
-      (send damage-out 14)
-      (check-equal? 0)))
-  (test-case
-    "does not damage ship when roll is above defense"
-    (~> (test-enemy)
-      (send damage-out 20)
-      (check-equal? 0)))
-  (test-case
-    "damages enemy if special roll is positive"
-    (define test-enemy
-      (new
-        (class enemy%
-          (super-new)
-          (define/override (special-rolls roll)
-            (cond
-              [(> roll 10) 999]
-              [else #f])))
-        [defense 14] [attack 5] [life 3]))
-    (~> (test-enemy)
-      (send damage-in 20)
-      (check-equal? 999)))
-  (test-case
-    "damages ship if special roll is positive"
-    (define test-enemy
-      (new
-        (class enemy%
-          (super-new)
-          (define/override (special-rolls roll)
-            (cond
-              [(< roll 10) -999]
-              [else #f])))
-        [defense 14] [attack 5] [life 3]))
-    (~> (test-enemy)
-      (send damage-out 1)
-      (check-equal? -999)))
-  (test-case
-    "damages normally if the roll is not special"
-    (define test-enemy
-      (new
-        (class enemy%
-          (super-new)
-          (define/override (special-rolls roll)
-            (cond
-              [(> roll 18) 999]
-              [else #f])))
-        [defense 14] [attack 5] [life 3]))
-    (~> (test-enemy)
-      (send damage-in 15)
-      (check-equal? 2)))
-  (test-case
-    "counts hits and misses"
-    (~> (test-enemy)
-      (send update-stats 20)
-      (send update-stats 1)
-      (send update-stats 20)
-      (-< (~> (get-field hits _)
-              (check-equal? 2))
-          (~> (get-field misses _)
-              (check-equal? 1)))))
-  (test-case
-    "counts consecutive hits"
-    (~> (test-enemy)
-      (send update-stats 20)
-      (effect (~> (get-field consecutive-hits _) (check-equal? 1)))
-      (send update-stats 20)
-      (effect (~> (get-field consecutive-hits _) (check-equal? 2)))
-      (send update-stats 1)
-      (effect (~> (get-field consecutive-hits _) (check-equal? 0)))
-      (send update-stats 20)
-      (get-field consecutive-hits _)
-      (check-equal? 1)))
-  (test-case
-    "counts consecutive misses"
-    (~> (test-enemy)
-      (send update-stats 1)
-      (effect (~> (get-field consecutive-misses _) (check-equal? 1)))
-      (send update-stats 1)
-      (effect (~> (get-field consecutive-misses _) (check-equal? 2)))
-      (send update-stats 20)
-      (effect (~> (get-field consecutive-misses _) (check-equal? 0)))
-      (send update-stats 1)
-      (get-field consecutive-misses _)
-      (check-equal? 1))))
+  (require (submod "./card.rkt" examples))
+  (provide dummy-card%))
 
 
 (define (ui-user-roll)
   ((ui) '(roll d20)))
 
+(define (ui-player-defeated)
+  ((ui) '(player-defeated)))
 
-(define encounter-card
-  (interface (card)))
+(define (ui-enemy-defeated)
+  ((ui) '(enemy-defeated)))
 
+(define (ui-announce-contest goal)
+  ((ui) `(contest #:goal ,goal)))
 
-(define encounter-card%
-  (class* object% (encounter-card)
-    (super-new)
-    (abstract describe discard make-enemy)
+(define (ui-contest-success)
+  ((ui) '(contest-success)))
 
-    (define/pubment (defeat board)
-      ((ui) '(player-defeated))
-      (inner board defeat board))
-
-    (define/pubment (victory board)
-      ((ui) '(enemy-defeated))
-      (inner board victory board))
-
-    ;TODO: Hit and Miss should be able to remove the enemy
-    (define/public (hit board enemy)
-      (values board enemy))
-
-    (define/public (miss board enemy)
-      (values board enemy))
-
-    (define/public (battle board enemy)
-      (~> ((ui-user-roll))
-          (-< (~>> (send enemy damage-out)
-                   (send board damage-ship))
-              (~>> (-< (send enemy update-stats _) _)
-                   (-< 1> (send _ damage-in _))
-                   (effect (~> 2> positive? (as hit?)))
-                   (send _ damage _)))
-          ;TODO: Review if 0 damage hits make sense
-          (if (gen hit?) (send this hit _ _) (send this miss _ _))
-          (if (or% (send game-over?)
-                   (if live? (send defeated?) (rectify #t)))
-              (~>> 1>
-                   (if (send _ game-over?)
-                       (send this defeat _)
-                       (send this victory _))
-                   (send this discard))
-              _)))
-
-    ;TODO: Refactor so we don't require a method definition
-    (define/pubment (warp-effect board)
-      (inner (send board age-pilot 10)
-             warp-effect board))
-
-    (define/public (warp board enemy)
-      (~> (board)
-          (send this warp-effect _)
-          (send discard this #:stack 'lost)))
-
-    (define/pubment (thwart-effect board)
-      (inner board thwart-effect board))
-
-    (define/public (thwart board enemy)
-      (~>> (board)
-           (send this thwart-effect)
-           (send this discard)))
-
-    (define/public (available-actions)
-      (list 'battle 'warp))
-
-    (define/public (ui-pick-action)
-      ((ui) `(pick-action ,@(available-actions))))
-
-    (define/public (resolve board)
-      (~> (board (make-enemy))
-          (feedback
-            (while (~> count (> 1)))
-            (~> (effect (~> ground
-                            (gen (send this ui-pick-action))
-                            (as user-action)))
-                (dynamic-send this user-action _ _)))))))
-
-
-(module+ examples
-  (provide dummy-encounter-card%)
-
-  (define dummy-encounter-card%
-    (class encounter-card%
-      (super-new)
-
-      (init-field name)
-
-      (define/override (describe)
-        ((ui) `(describe-card ,name)))
-
-      (define/override (discard the-board)
-        (send the-board discard this))
-
-      (define/override (make-enemy)
-        (new enemy% [defense 14]
-                    [attack 5]
-                    [life 3])))))
-
-
-(module+ encounter-card%-tests
-  (require (submod ".." examples))
-  (require (submod "ui.rkt" examples))
-  (define test-board (new test-board%))
-  (define test-card (new dummy-encounter-card% [name 'enemy-ship]))
-  (define test-enemy (new enemy% [defense 14] [attack 5] [life 3]))
-  (define-flow check-enemy-gone (~> count (check-equal? 1)))
-  (test-case
-    "warping ages the pilot 10 years and removes the enemy"
-    (~> (test-card)
-        (send warp test-board test-enemy)
-        (effect check-enemy-gone)
-        (send pilot-aged?)
-        check-true))
-  (test-case
-    "battling can damage the enemy"
-    (parameterize ([ui (test-ui '([(roll d20) 20]
-                                  (enemy-damaged #:damage 4 #:life -1)
-                                  (enemy-defeated)))])
-      (~> (test-card)
-          (send battle test-board test-enemy)
-          (effect check-enemy-gone)
-          (send game-over?)
-          check-false)))
-  (test-case
-    "battling can destroy the ship"
-    (parameterize ([ui (test-ui `([(roll d20) 1]
-                                  (enemy-evaded)
-                                  (player-defeated)))])
-      (~> (test-card)
-          (send battle test-board test-enemy)
-          (effect check-enemy-gone)
-          (send game-over?)
-          check-true)))
-  (test-case
-    "thwarting discards the enemy immediately"
-    (~> (test-card)
-        (send thwart test-board test-enemy)
-        (effect check-enemy-gone)
-        (send game-over?)
-        check-false))
-  (test-case
-    "resolving lets player warp away at the beginning"
-    (parameterize ([ui (test-ui `([(pick-action battle warp) warp]))])
-      (~> (test-card)
-          (send resolve test-board)
-          (send game-over?)
-          check-false)))
-  (test-case
-    "resolving lets player warp away in the middle of the encounter"
-    (parameterize ([ui (test-ui `([(pick-action battle warp) battle]
-                                  [(roll d20) 17]
-                                  (enemy-damaged #:damage 2 #:life 1)
-                                  [(pick-action battle warp) warp]))])
-      (~> (test-card)
-          (send resolve test-board)
-          (send game-over?)
-          check-false)))
-  (test-case
-    "resolving ends when enemy is destroyed"
-    (parameterize ([ui (test-ui `([(pick-action battle warp) battle]
-                                  [(roll d20) 20]
-                                  (enemy-damaged #:damage 4 #:life -1)
-                                  (enemy-defeated)))])
-      (~> (test-card)
-          (send resolve test-board)
-          (send game-over?)
-          check-false)))
-  (test-case
-    "resolving ends when ship is destroyed"
-    (parameterize ([ui (test-ui `([(pick-action battle warp) battle]
-                                  [(roll d20) 1]
-                                  (enemy-evaded)
-                                  (player-defeated)))])
-      (~> (test-card)
-          (send resolve test-board)
-          (send game-over?)
-          check-true))))
-
+(define (ui-contest-failure)
+  ((ui) '(contest-failure)))
 
 ;
 ; SPECIFIC CARDS
@@ -525,7 +73,7 @@
 
 (module+ plasma-cruiser-card%-tests
   (require (submod ".." examples))
-  (require (submod "ui.rkt" examples))
+  (require (submod "../ui.rkt" examples))
   (test-case
     "warping ages you 30 years"
     (define test-board
@@ -575,7 +123,7 @@
 
 (module+ marauder-card%-tests
   (require (submod ".." examples))
-  (require (submod "ui.rkt" examples))
+  (require (submod "../ui.rkt" examples))
   (test-case
     "you can't warp away"
     (parameterize ([ui (test-ui '([(pick-action battle) battle]))])
@@ -618,7 +166,7 @@
 
 (module+ star-strider-card%-tests
   (require (submod ".." examples))
-  (require (submod "ui.rkt" examples))
+  (require (submod "../ui.rkt" examples))
   (test-case
     "winning ages you 20 years"
     (define test-board
@@ -673,7 +221,7 @@
 
 (module+ nebula-raider-card%-tests
   (require (submod ".." examples))
-  (require (submod "ui.rkt" examples))
+  (require (submod "../ui.rkt" examples))
   (test-case
     "rolling 5 or less causes -2 damage"
     (define test-board
@@ -755,7 +303,7 @@
  
 (module+ infestation-card%-tests
   (require (submod ".." examples))
-  (require (submod "ui.rkt" examples))
+  (require (submod "../ui.rkt" examples))
   (test-case
     "missing causes -2 damage"
     (define test-board
@@ -834,7 +382,7 @@
 
 (module+ solar-flair-card%-tests
   (require (submod ".." examples))
-  (require (submod "ui.rkt" examples))
+  (require (submod "../ui.rkt" examples))
   (test-case
     "missing causes -2 damage and discards top three cards"
     (define test-board
@@ -909,12 +457,12 @@
                   (values (send enemy damage 3)))
               (values enemy))))
 
-    (define/override (discard board)enemy
+    (define/override (discard board)
       (send board discard this #:stack 'graveyard))))
 
 (module+ time-eater-card%-tests
   (require (submod ".." examples))
-  (require (submod "ui.rkt" examples))
+  (require (submod "../ui.rkt" examples))
   (define test-board (new test-board%))
   (test-case
     "missing sends the top deck card to the lost stack and ages +10 years"
@@ -960,9 +508,12 @@
       (~> ((new time-eater-card%))
           (send resolve test-board)
           (~> (get-field stacks _)
-              (hash-ref 'deck)
-              length
-              (check-equal? 1))))))
+              (-< (~> (hash-ref 'deck)
+                      length
+                      (check-equal? 1))))))))
+                  ;; (~> (hash-ref 'graveyard '())
+                  ;;     length
+                  ;;     (check-equal? 0))))))))
 
 ;; (define-card/encounter warp-scourge-card%
 ;;   #:name "Warp scourge"
@@ -1003,18 +554,18 @@
 
 (module+ warp-scourge-card%-tests
   (require (submod ".." examples))
-  (require (submod "ui.rkt" examples))
+  (require (submod "../ui.rkt" examples))
   (define test-board (new test-board%))
-  ;; (test-case
-  ;;   "hitting only once does no damage"
-  ;;   (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
-  ;;                                 [(roll d20) 20]
-  ;;                                 (enemy-evaded)
-  ;;                                 [(pick-action battle warp) warp]))])
-  ;;     (~> ((new warp-scourge-card%))
-  ;;         (send resolve test-board)
-  ;;         (-< (~> (send game-over?)
-  ;;                 check-false)))))
+  (test-case
+    "hitting only once does no damage"
+    (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
+                                  [(roll d20) 20]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) warp]))])
+      (~> ((new warp-scourge-card%))
+          (send resolve test-board)
+          (-< (~> (send game-over?)
+                  check-false)))))
   (test-case
     "hitting twice does damage"
     (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
@@ -1027,26 +578,26 @@
       (~> ((new warp-scourge-card%))
           (send resolve test-board)
           (-< (~> (send game-over?)
+                  check-false)))))
+  (test-case
+    "alternate hits and misses do no damage"
+    (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
+                                  [(roll d20) 20]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) battle]
+                                  [(roll d20) 11]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) battle]
+                                  [(roll d20) 20]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) battle]
+                                  [(roll d20) 11]
+                                  (enemy-evaded)
+                                  [(pick-action battle warp) warp]))])
+      (~> ((new warp-scourge-card%))
+          (send resolve test-board)
+          (-< (~> (send game-over?)
                   check-false))))))
-  ;; (test-case
-  ;;   "alternate hits and misses do no damage"
-  ;;   (parameterize ([ui (test-ui '([(pick-action battle warp) battle]
-  ;;                                 [(roll d20) 20]
-  ;;                                 (enemy-evaded)
-  ;;                                 [(pick-action battle warp) battle]
-  ;;                                 [(roll d20) 11]
-  ;;                                 (enemy-evaded)
-  ;;                                 [(pick-action battle warp) battle]
-  ;;                                 [(roll d20) 20]
-  ;;                                 (enemy-evaded)
-  ;;                                 [(pick-action battle warp) battle]
-  ;;                                 [(roll d20) 11]
-  ;;                                 (enemy-evaded)
-  ;;                                 [(pick-action battle warp) warp]))])
-  ;;     (~> ((new warp-scourge-card%))
-  ;;         (send resolve test-board)
-  ;;         (-< (~> (send game-over?)
-  ;;                 check-false))))))
 
 ;TODO: Contest action (think of a way to configure the rounds)
 
@@ -1066,6 +617,69 @@
 ;;
 ;;   #:discard graveyard)
 
+(define enemy-fleet-card%
+  (class encounter-card%
+    (super-new)
+    
+    (define/override (describe)
+      ((ui) `(describe-card
+               #:name "Enemy fleet"
+               #:text "Win 2 of 3 rolls to escape. Otherwise, take -3 damage, and place enemy fleet in the lost stack"
+               #:defense 12)))
+
+    (define/override (make-enemy)
+      (new enemy% [defense 12]
+                  [attack 11]
+                  [life -1]))
+
+    (define/override (available-actions)
+      (~>> ((super available-actions))
+           (remove 'battle)
+           (cons 'my-contest)))
+
+    (inherit contest)
+
+    (define/public (my-contest board enemy)
+      (contest 2 board enemy))
+
+    (define/augment (defeat board)
+      (~> (board)
+          (send damage-ship -3)
+          (send discard this #:stack 'lost)))
+
+    (define/override (discard board)
+      (send board discard this #:stack 'graveyard))))
+
+(module+ enemy-fleet-card%-tests
+  (require (submod ".." examples))
+  (require (submod "../ui.rkt" examples))
+  (define test-board
+    (new (class test-board%
+           (super-new)
+           (define/override (damage-ship damage)
+             (check-equal? damage -3)
+             this))))
+  (test-case
+    "losing two rolls loses, damges the ship and sends card to lost stack"
+    (parameterize ([ui (test-ui '([(pick-action my-contest warp) my-contest]
+                                  (contest #:goal 2)
+                                  [(roll d20) 1]
+                                  (contest-failure)
+                                  [(roll d20) 1]
+                                  (contest-failure)
+                                  (player-defeated)))])
+      (~> ((new enemy-fleet-card%))
+          (send resolve test-board)
+          (-< (~> (send game-over?)
+                  check-false)
+              (~> (get-field stacks _)
+                  (-< (~> (hash-ref 'lost)
+                          length
+                          (check-equal? 1))
+                      (~> (hash-ref 'graveyard '())
+                          length
+                          (check-equal? 0)))))))))
+
 (define all-cards
   (list
     (new plasma-cruiser-card%)
@@ -1075,7 +689,8 @@
     (new infestation-card%)
     (new solar-flair-card%)
     (new time-eater-card%)
-    (new warp-scourge-card%)))
+    (new warp-scourge-card%)
+    (new enemy-fleet-card%)))
 
 
 (module+ examples
@@ -1137,8 +752,6 @@
                           [stacks stacks])))))
 
 (module+ test
-  (require (submod ".." card?-tests))
-  (require (submod ".." enemy%-tests))
   (require (submod ".." encounter-card%-tests))
   (require (submod ".." plasma-cruiser-card%-tests))
   (require (submod ".." marauder-card%-tests))
@@ -1147,4 +760,5 @@
   (require (submod ".." infestation-card%-tests))
   (require (submod ".." solar-flair-card%-tests))
   (require (submod ".." time-eater-card%-tests))
-  (require (submod ".." warp-scourge-card%-tests)))
+  (require (submod ".." warp-scourge-card%-tests))
+  (require (submod ".." enemy-fleet-card%-tests)))

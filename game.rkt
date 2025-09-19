@@ -100,14 +100,13 @@
 (module+ main-loop-tests
   (require (submod "ui.rkt" examples))
   (require (submod "board.rkt" examples))
-  (require (submod "card.rkt" examples))
+  (require (submod "card/all-cards.rkt" examples))
   (define test-board (board-with-deck (list (new dummy-card% [name 'c]))))
   (test-case
     "reveals the new card, resolves it and replaces it from the deck"
     (parameterize ([ui (test-ui `([(choose-card) "n"]
                                   (describe-card a)
-                                  (resolving-card a)
-                                  (discarding graveyard a)))])
+                                  (resolving-card a)))])
       (~> (test-board (new dummy-card% [name 'a]) (new dummy-card% [name 'b]))
           main-loop
           (block 1)
@@ -118,8 +117,7 @@
     "reveals the old card, resolves it and replaces it from the deck"
     (parameterize ([ui (test-ui `([(choose-card) "o"]
                                   (describe-card b)
-                                  (resolving-card b)
-                                  (discarding graveyard b)))])
+                                  (resolving-card b)))])
       (~> (test-board (new dummy-card% [name 'a]) (new dummy-card% [name 'b]))
           main-loop
           (block 1)
@@ -136,8 +134,7 @@
     "does not replace card when deck is empty"
     (parameterize ([ui (test-ui `((auto-reveal)
                                   (describe-card c)
-                                  (resolving-card c)
-                                  (discarding graveyard c)))])
+                                  (resolving-card c)))])
       (~> (empty-board (new dummy-card% [name 'c]))
           main-loop
           count
@@ -147,8 +144,7 @@
     (parameterize ([ui (test-ui `((auto-reveal)
                                   (describe-card pilot-killer)
                                   (killing-pilot)
-                                  (pilot-aged #:years 100 #:age 100)
-                                  (discarding graveyard pilot-killer)))])
+                                  (pilot-aged #:years 100 #:age 100)))])
       (~> (test-board (new pilot-killer-card%))
         main-loop
         main-loop
@@ -159,8 +155,7 @@
     (parameterize ([ui (test-ui `((auto-reveal)
                                   (describe-card ship-destroyer)
                                   (destroying-ship)
-                                  (ship-damaged #:damage -10 #:total-damage -10)
-                                  (discarding graveyard ship-destroyer)))])
+                                  (ship-damaged #:damage -10 #:total-damage -10)))])
       (~> (test-board (new ship-destroyer-card%))
         main-loop
         main-loop

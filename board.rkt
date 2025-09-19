@@ -8,7 +8,7 @@
 (require rackunit)
 (require "stack.rkt")
 (require "qi-class.rkt")
-(require "card.rkt")
+(require "card/all-cards.rkt")
 (require "ui.rkt")
 
 
